@@ -1,0 +1,91 @@
+# LLMD extension
+lang: typescript
+
+// Spec for this extension, written in its own format. Format rules: @skills/llmd/SKILL.md
+
+## Done
+
+@src/refs.ts
+  - [x] findRefs(text: string) -> Ref[]
+    - skip lines inside fenced code blocks
+    - match @path not preceded by a word char, trim a trailing sentence dot
+
+@src/outline.ts
+  : OutlineNode
+    - kind: 'heading' | 'unit' | 'type' | 'method' | 'field'
+    - name: string
+    - detail: string
+    - line: number
+    - endLine: number
+    - children: OutlineNode[]
+  - [x] parseOutline(text: string) -> OutlineNode[]
+    - skip lines inside fenced code blocks
+    - headings nest by level; units go under the nearest heading
+    - types go under their unit; methods and fields under their type, or the unit when there is no type
+    - lines indented under a method are logic, not symbols
+    - endLine is the last line that belongs to the node, so the breadcrumbs follow the cursor
+
+@src/symbols.ts
+  : Declared
+    - kind: 'type' | 'unit'
+    - line: number
+    - members: Map<string, number>
+  : Call
+    - name: string
+    - member: string
+    - line: number
+    - start: number
+    - end: number
+  - [x] indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
+    - every type by its name, every unit by its file name without extension, so src/refs.ts is "refs"
+    - members are the methods, fields and types directly under it, mapped to their line
+    - units with the same path share their members
+  - [x] findCalls(text: string) -> Call[]
+    - every Name.member outside fenced code blocks and outside @ and + paths
+    - start and end are the columns of the whole Name.member
+
+@src/extension.ts
+  - [x] activate(context: vscode.ExtensionContext)
+    - warn on @refs that don't exist, using refs.findRefs
+    - make @refs to files Ctrl+clickable
+    - complete files and folders after @ and /, one folder level at a time
+    - dim [x] methods and their logic lines, using doneLines
+    - on Enter on an empty "- " line, remove it and outdent; otherwise a normal Enter
+    - show outline.parseOutline as document symbols, using toSymbols
+    - register findDefinition, completeNames and callProblems next to the other providers and warnings
+  - [x] doneLines(text: string) -> number[]
+    - lines of [x] methods plus the deeper-indented lines under them
+  - [x] toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument) -> vscode.DocumentSymbol[]
+    - heading, unit, type, method, field become String, File, Class, Method and Field symbols
+    - method detail is its signature, like "(dir string) -> error"; a + unit's detail is "new file"
+  - [x] findDefinition(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.Location | undefined
+    - on the member part of Name.member, go to the member; on a declared name, go to its declaration
+  - [x] completeNames(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.CompletionItem[]
+    - after "Name." offer that name's members
+    - otherwise offer every declared name: types as classes, units as files
+    - nothing inside @ and + paths
+  - [x] callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
+    - warn on Name.member when Name is a declared type without that member
+    // unit names aren't checked: prose like "extension.ts" would look like a call
+
+@language-configuration.json
+  - on Enter after a unit, type or method line, indent one level and start the line with "- "
+
+@syntaxes/llmd.tmLanguage.json
+  - color @path and +path unit lines like file names
+  - color ": Name" lines like type names
+  - color "? ..." lines like warnings and "// ..." lines like comments
+  - markdown headings, code blocks and inline markdown for everything else
+  // decided: LLMD lines win over markdown; tables, quotes and numbered lists lose markdown colors
+
+@src/test.ts
+  - check findRefs, parseOutline, indexSymbols and findCalls on small specs
+
+@src/e2e.ts
+  - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
+  - go to definition, "Name." completion and a typo warning
+
+@HOWTO.md
+  - how to install the extension and the skill
+  - how to write a spec, with every line type and an example
+  - how to work with Claude from a spec: implement, answer ? questions, review [x] ticks

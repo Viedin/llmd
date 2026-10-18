@@ -1,0 +1,12 @@
+src/**
+.vscode/**
+tsconfig.json
+**/*.map
+out/test.js
+out/e2e.js
+out/runE2E.js
+.vscode-test/**
+*.vsix
+skills/**
+spec.llmd
+example.llmd

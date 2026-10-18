@@ -1,0 +1,14 @@
+# LLMD extension
+
+- Language
+  - Registered in @package.json
+  - Highlighting borrowed from markdown → @syntaxes/llmd.tmLanguage.json
+- Editor help → @src/extension.ts
+  - Type @ to get files and folders, / to walk into a folder
+  - Ctrl+click a file reference to open it
+  - Broken reference gets a warning → @does/not/exist.go
+- Parsing → @src/refs.ts, checked by @src/test.ts
+
+```js
+// @decorators inside code blocks are ignored
+```

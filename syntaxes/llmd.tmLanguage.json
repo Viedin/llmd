@@ -1,0 +1,40 @@
+{
+  "scopeName": "text.llmd",
+  "comment": "Line-based on purpose: markdown's block rules (lists, 4-space code blocks) would swallow LLMD lines. Only headings, fences and inline markdown are reused.",
+  "patterns": [
+    { "include": "text.html.markdown#fenced_code_block" },
+    { "include": "text.html.markdown#heading" },
+    {
+      "name": "comment.line.double-slash.llmd",
+      "match": "^\\s*//.*$"
+    },
+    {
+      "name": "markup.bold.question.llmd",
+      "match": "^\\s*(\\?).*$",
+      "captures": { "1": { "name": "keyword.control.question.llmd" } }
+    },
+    {
+      "match": "^\\s*([@+])([\\w\\-./]+)\\s*$",
+      "captures": {
+        "1": { "name": "keyword.operator.unit.llmd" },
+        "2": { "name": "string.other.path.llmd" }
+      }
+    },
+    {
+      "match": "^\\s*(:)\\s*([A-Za-z_]\\w*)",
+      "captures": {
+        "1": { "name": "keyword.operator.type.llmd" },
+        "2": { "name": "entity.name.type.llmd" }
+      }
+    },
+    {
+      "match": "^\\s*(-)\\s",
+      "captures": { "1": { "name": "punctuation.definition.list.begin.markdown" } }
+    },
+    {
+      "name": "string.other.path.llmd",
+      "match": "(?<![\\w@])@[\\w\\-./]+"
+    },
+    { "include": "text.html.markdown#inline" }
+  ]
+}

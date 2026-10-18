@@ -1,0 +1,68 @@
+{
+  "name": "llmd",
+  "displayName": "LLMD",
+  "description": "Markdown flow specs with @file references, for planning work with an LLM",
+  "version": "0.0.1",
+  "publisher": "filip",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:llmd"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "llmd",
+        "aliases": [
+          "LLMD"
+        ],
+        "extensions": [
+          ".llmd"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[llmd]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true
+      }
+    },
+    "commands": [
+      { "command": "llmd.enter", "title": "LLMD: Enter" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "llmd.enter", "when": "false" }
+      ]
+    },
+    "keybindings": [
+      {
+        "key": "enter",
+        "command": "llmd.enter",
+        "when": "editorTextFocus && editorLangId == llmd && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible && !editorHasMultipleSelections && !inSnippetMode"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "llmd",
+        "scopeName": "text.llmd",
+        "path": "./syntaxes/llmd.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "vscode:prepublish": "npm run compile",
+    "test": "npm run compile && node out/test.js",
+    "test:e2e": "npm run compile && node out/runE2E.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "~1.80.0",
+    "@vscode/test-electron": "^3.1.0",
+    "typescript": "^7.0.2"
+  }
+}

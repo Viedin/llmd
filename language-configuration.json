@@ -1,0 +1,16 @@
+{
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*[@+][\\w\\-./]+\\s*$",
+      "action": { "indent": "indent", "appendText": "- " }
+    },
+    {
+      "beforeText": "^\\s*:\\s*[A-Za-z_]\\w*.*$",
+      "action": { "indent": "indent", "appendText": "- " }
+    },
+    {
+      "beforeText": "^\\s*-\\s+(\\[[ xX]\\]\\s+)?[A-Za-z_]\\w*\\(.*\\).*$",
+      "action": { "indent": "indent", "appendText": "- " }
+    }
+  ]
+}
