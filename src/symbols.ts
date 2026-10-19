@@ -23,6 +23,7 @@ export function indexSymbols(nodes: OutlineNode[]): Map<string, Declared> {
     if (!key) return; // folder units like @src/
     let declared = index.get(key);
     if (!declared) index.set(key, (declared = { kind, line: node.line, members: new Map() }));
+    else if (kind === 'type' && declared.kind === 'unit') Object.assign(declared, { kind, line: node.line }); // type book in book.go wins
     for (const child of node.children) if (!declared.members.has(child.name)) declared.members.set(child.name, child.line);
   };
   const walk = (nodes: OutlineNode[]) =>
@@ -53,4 +54,48 @@ export function findCalls(text: string): Call[] {
     }
   });
   return calls;
+}
+
+// ponytail: the everyday built-in types per language, not full type systems; add a language when a spec needs it.
+const BUILTINS: Record<string, string[]> = {
+  go: ['bool', 'byte', 'rune', 'string', 'error', 'any', 'int', 'int8', 'int16', 'int32', 'int64', 'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'float32', 'float64', 'map', 'chan'],
+  csharp: ['bool', 'byte', 'char', 'decimal', 'double', 'float', 'int', 'long', 'object', 'short', 'string', 'uint', 'ulong', 'void', 'var', 'List', 'Dictionary', 'Task', 'DateTime', 'Guid'],
+  typescript: ['string', 'number', 'boolean', 'bigint', 'void', 'any', 'unknown', 'never', 'null', 'undefined', 'object', 'Promise', 'Array', 'Map', 'Set', 'Record', 'Date'],
+  python: ['int', 'float', 'str', 'bool', 'bytes', 'None', 'list', 'dict', 'set', 'tuple', 'Any', 'Optional'],
+  rust: ['bool', 'char', 'str', 'String', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'usize', 'isize', 'f32', 'f64', 'Vec', 'Option', 'Result', 'Box', 'HashMap'],
+  java: ['boolean', 'byte', 'char', 'double', 'float', 'int', 'long', 'short', 'void', 'String', 'Object', 'List', 'Map', 'Set', 'Optional'],
+};
+const ALIASES: Record<string, string> = { golang: 'go', 'c#': 'csharp', cs: 'csharp', ts: 'typescript', javascript: 'typescript', js: 'typescript', py: 'python', rs: 'rust' };
+
+// The built-in types for the spec's "lang:" line; every language's when there is none or it's unknown.
+export function builtinTypes(text: string): string[] {
+  const lang = text.match(/^lang:\s*(\S+)/m)?.[1].toLowerCase();
+  const known = lang && BUILTINS[ALIASES[lang] ?? lang];
+  return known || [...new Set(Object.values(BUILTINS).flat())];
+}
+
+// True when col is where a type goes: after "- name:" in a field, or after the name in "- name(...) -> ...".
+export function inTypePosition(line: string, col: number): boolean {
+  const m = line.match(/^\s*-\s+(?:\[[ xX]\]\s+)?[A-Za-z_]\w*\s*[:(]/);
+  return !!m && col >= m[0].length;
+}
+
+// Known type names (built-in or declared in the spec) in field types and method signatures, for coloring.
+export function typeSpans(text: string, nodes: OutlineNode[]): { line: number; start: number; end: number }[] {
+  const known = new Set(builtinTypes(text));
+  for (const [name, d] of indexSymbols(nodes)) if (d.kind === 'type') known.add(name);
+  const lines = text.split('\n');
+  const spans: { line: number; start: number; end: number }[] = [];
+  const walk = (nodes: OutlineNode[]) => nodes.forEach((n) => {
+    if (n.kind === 'field' || n.kind === 'method') {
+      const line = lines[n.line].replace(/\r$/, '');
+      const from = line.indexOf(n.name) + n.name.length;
+      for (const m of line.slice(from).matchAll(/(?<![\w.])[A-Za-z_]\w*(?![\w.])/g)) {
+        if (known.has(m[0])) spans.push({ line: n.line, start: from + m.index!, end: from + m.index! + m[0].length });
+      }
+    }
+    walk(n.children);
+  });
+  walk(nodes);
+  return spans;
 }

@@ -23,8 +23,8 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `## [x] Title` | A done step. Context for later steps; don't redo it. |
 | `### Heading` | A subsection inside a step. Part of that step. |
 | `@path/to/file.go` | A unit: an **existing** file. Children describe what it has or should get. |
-| `+path/to/file.go` | A unit: a **new** file to create. |
-| `: Name` | A type, class or struct inside the file above. Optional when the file has only one. |
+| `+path/to/file.go` | A unit: a **new** file to create. A unit can also be a folder or package, e.g. `+cmd/internal/models`. |
+| `: Name` or `- : Name` | A type, class or struct inside the unit above. Optional when the file has only one. |
 | `- name: Type` | A field (no parentheses). |
 | `- Name(args) -> Return` | A method or function (has parentheses). `-> Return` is optional. |
 | `- [x] Name(...)` | The user marked this method done. Treat it as built. You never add these yourself. |

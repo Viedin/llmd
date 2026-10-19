@@ -74,8 +74,8 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `lang: csharp` | The language and stack, once at the top. | Nothing. It's for Claude. |
 | `## Title` | A step. The agent makes it `## [x] Title` once it's done. | Shows in the outline. A done step is greyed out. |
 | `@Program.cs` | An **existing** file. Lines under it say what it has or should get. | Ctrl+click opens the file. A warning if the file doesn't exist. |
-| `+HandleUser.cs` | A **new** file to create. | Shown as "new file" in the outline. |
-| `: Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. |
+| `+HandleUser.cs` | A **new** file to create. A folder works too, e.g. `+cmd/internal/models` for a Go package. | Shown as "new file" in the outline. |
+| `: Calculator` or `- : Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. |
 | `- total: double` | A field (no parentheses). | Shows in the outline. |
 | `- Add(a, b) -> double` | A method or function (it has parentheses). `-> ...` is the return type and is optional. | Shows in the outline. |
 | `- line` under a method | Logic, in order. Say what should happen, not the exact code. | Nothing special. |
@@ -116,7 +116,8 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 
 ### Editor help while you write
 
-- **`@`** lists the files and folders in your project. Type `/` to go into a folder. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
+- **`@`** searches every file and folder in your project: `@book` finds `cmd/internal/models/book.go`. Type `/` to go into a folder one level at a time. A `+` at the start of a line does the same, for new files in existing folders. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
+- **Types:** after `- id:`, in a method's parameters and after `->`, completion offers the types declared in the spec first, then the built-in types for its `lang:`. Those names are colored as types, so a misspelled type stays plain.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` line, Enter starts a new `- ` at the same level.
 - **Enter on an empty `- `** steps back out one level and keeps the `- `, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.

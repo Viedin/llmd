@@ -30,8 +30,10 @@ export async function run() {
   const list = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', uri, pos, '@');
   const labels = list.items.map((i) => (typeof i.label === 'string' ? i.label : i.label.label));
   assert.ok(labels.includes('src/') && labels.includes('package.json'), `@ completions: ${labels.join(', ')}`);
+  assert.ok(labels.includes('src/outline.ts') && !labels.some((l) => l.startsWith('node_modules')), '@ searches the whole project');
 
   await checkCodeLens();
+  await checkTypes();
   await checkHighlighting();
   await checkEnter();
   await checkSymbols();
@@ -161,4 +163,20 @@ async function checkCodeLens() {
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
   assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.arguments?.[1]]), [[2, 'More input'], [4, 'Fix it']],
     'Implement shows on open ## steps only');
+}
+
+async function checkTypes() {
+  const { doc } = await openTemp('types.llmd', 'lang: go\n+cmd/internal/models\n  - : book \n    - id: int\n    - owner: book\n    - ref: ');
+  const tokens = await vscode.commands.executeCommand<{ c: string; t: string }[]>('_workbench.captureSyntaxTokens', doc.uri);
+  assert.ok(tokens.some((t) => t.c.trim() === 'book' && /entity\.name\.type\.llmd/.test(t.t)), '"- : book" colors book as a type');
+
+  const end = doc.lineAt(5).range.end;
+  const list = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', doc.uri, end, ':');
+  const labels = list.items.map((i) => (typeof i.label === 'string' ? i.label : i.label.label));
+  assert.ok(labels.includes('book') && labels.includes('float64') && !labels.includes('models'), `type completions: ${labels.join(', ')}`);
+
+  const legend = await vscode.commands.executeCommand<vscode.SemanticTokensLegend>('vscode.provideDocumentSemanticTokensLegend', doc.uri);
+  const semantic = await vscode.commands.executeCommand<vscode.SemanticTokens>('vscode.provideDocumentSemanticTokens', doc.uri);
+  assert.deepStrictEqual(legend.tokenTypes, ['type']);
+  assert.strictEqual(semantic.data.length / 5, 2, 'int and book are colored as types');
 }

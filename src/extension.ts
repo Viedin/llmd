@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
-import { findCalls, indexSymbols, inPath } from './symbols';
+import { builtinTypes, findCalls, indexSymbols, inPath, inTypePosition, typeSpans } from './symbols';
 
 // @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 function rootOf(doc: vscode.TextDocument): vscode.Uri {
@@ -81,8 +81,49 @@ export function completeNames(doc: vscode.TextDocument, pos: vscode.Position): v
       return new vscode.CompletionItem(member, kind);
     });
   }
+  if (inTypePosition(text, pos.character)) {
+    const declared = [...index].filter(([, d]) => d.kind === 'type').map(([name]) => new vscode.CompletionItem(name, vscode.CompletionItemKind.Class));
+    const builtin = builtinTypes(doc.getText()).filter((t) => !index.has(t)).map((t) => new vscode.CompletionItem(t, vscode.CompletionItemKind.TypeParameter));
+    declared.forEach((i) => (i.sortText = '0' + i.label)); // the spec's own types first
+    return [...declared, ...builtin];
+  }
+  if (text.slice(0, pos.character).endsWith(':')) return [];
   return [...index].map(([name, d]) =>
     new vscode.CompletionItem(name, d.kind === 'type' ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.File));
+}
+
+const typeLegend = new vscode.SemanticTokensLegend(['type']);
+
+function typeTokens(doc: vscode.TextDocument): vscode.SemanticTokens {
+  const text = doc.getText();
+  const tokens = new vscode.SemanticTokensBuilder(typeLegend);
+  for (const s of typeSpans(text, parseOutline(text))) tokens.push(s.line, s.start, s.end - s.start, 0);
+  return tokens.build();
+}
+
+const SKIP = new Set(['.git', 'node_modules', 'out', 'dist', 'build', 'bin', 'obj', '.vscode-test']);
+
+// Every file and folder under root, as "a/b/c.go" and "a/b/", for @ search.
+// ponytail: walks the disk on each @ and stops at 5000 entries; cache it if big repos feel slow.
+async function projectPaths(root: vscode.Uri): Promise<[string, boolean][]> {
+  const found: [string, boolean][] = [];
+  const queue = [''];
+  while (queue.length && found.length < 5000) {
+    const dir = queue.shift()!;
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(root, dir));
+    } catch {
+      continue;
+    }
+    for (const [name, type] of entries) {
+      if (SKIP.has(name)) continue;
+      const isDir = (type & vscode.FileType.Directory) !== 0;
+      found.push([dir + name + (isDir ? '/' : ''), isDir]);
+      if (isDir) queue.push(dir + name + '/');
+    }
+  }
+  return found;
 }
 
 export function callProblems(doc: vscode.TextDocument): vscode.Diagnostic[] {
@@ -197,7 +238,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.languages.registerDefinitionProvider(selector, { provideDefinition: findDefinition }),
-    vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: completeNames }, '.'),
+    vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: completeNames }, '.', ':'),
+    vscode.languages.registerDocumentSemanticTokensProvider(selector, { provideDocumentSemanticTokens: typeTokens }, typeLegend),
 
     vscode.languages.registerDocumentLinkProvider(selector, {
       provideDocumentLinks: async (doc) => (await scan(doc)).links,
@@ -206,32 +248,36 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCompletionItemProvider(selector, {
       async provideCompletionItems(doc, pos) {
         const before = doc.lineAt(pos).text.slice(0, pos.character);
-        const m = before.match(/(?<![\w@])@([\w\-./]*)$/);
+        const m = before.match(/(?:^\s*\+|(?<![\w@])@)([\w\-./]*)$/); // @path anywhere, +path at the start of a line
         if (!m) return;
         const typed = m[1];
         const dir = typed.slice(0, typed.lastIndexOf('/') + 1);
-        let entries: [string, vscode.FileType][];
-        try {
-          entries = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(rootOf(doc), dir));
-        } catch {
-          return;
+        let entries: [string, boolean][];
+        if (dir) {
+          // After a "/", walk into that folder one level at a time.
+          try {
+            const listed = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(rootOf(doc), dir));
+            entries = listed.filter(([name]) => name !== '.git').map(([name, type]) => {
+              const isDir = (type & vscode.FileType.Directory) !== 0;
+              return [name + (isDir ? '/' : ''), isDir];
+            });
+          } catch {
+            return;
+          }
+        } else {
+          // Right after @ or +, search the whole project: typing "book" finds cmd/internal/models/book.go.
+          entries = await projectPaths(rootOf(doc));
         }
         const replace = new vscode.Range(pos.translate(0, -(typed.length - dir.length)), pos);
-        return entries
-          .filter(([name]) => name !== '.git')
-          .map(([name, type]) => {
-            const isDir = (type & vscode.FileType.Directory) !== 0;
-            const item = new vscode.CompletionItem(
-              isDir ? name + '/' : name,
-              isDir ? vscode.CompletionItemKind.Folder : vscode.CompletionItemKind.File
-            );
-            item.range = replace;
-            item.sortText = (isDir ? '0' : '1') + name;
-            // Keep the list open so you can walk into the folder.
-            if (isDir) item.command = { command: 'editor.action.triggerSuggest', title: '' };
-            return item;
-          });
+        return entries.map(([name, isDir]) => {
+          const item = new vscode.CompletionItem(name, isDir ? vscode.CompletionItemKind.Folder : vscode.CompletionItemKind.File);
+          item.range = replace;
+          item.sortText = (name.slice(0, -1).includes('/') ? '1' : '0') + (isDir ? '0' : '1') + name; // top level first
+          // Keep the list open so you can walk into the folder.
+          if (isDir) item.command = { command: 'editor.action.triggerSuggest', title: '' };
+          return item;
+        });
       },
-    }, '@', '/')
+    }, '@', '/', '+')
   );
 }

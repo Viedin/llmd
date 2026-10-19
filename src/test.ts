@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
-import { findCalls, indexSymbols, inPath } from './symbols';
+import { builtinTypes, findCalls, indexSymbols, inPath, inTypePosition, typeSpans } from './symbols';
 
 const text = [
   '- see @api/upload.go.',
@@ -101,5 +101,39 @@ assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Program Files\\Po
   `claude 'implement the step "Don''t spend $HOME" in a.llmd'`);
 assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Windows\\System32\\cmd.exe'),
   `claude "implement the step 'Don't spend $HOME' in a.llmd"`);
+
+const models = [
+  'lang: go', //                 0
+  '+cmd/internal/models', //     1
+  '  - : book ', //              2
+  '    - id: int', //            3
+  '    - name: string', //       4
+  '    - author: Author', //     5
+  '    - Save(db *sql.DB, b book) -> error', // 6
+  '  : Author', //               7
+  '    - when: time.Time', //    8
+].join('\n');
+assert.deepStrictEqual(shape(parseOutline(models)), [
+  ['unit cmd/internal/models new file 1-8',
+    ['type book  2-6', ['field id int 3-3'], ['field name string 4-4'], ['field author Author 5-5'], ['method Save (db *sql.DB, b book) -> error 6-6']],
+    ['type Author  7-8', ['field when time.Time 8-8']]],
+]);
+const spans = typeSpans(models, parseOutline(models)).map((s) => `${s.line}:${models.split('\n')[s.line].slice(s.start, s.end)}`);
+assert.deepStrictEqual(spans, ['3:int', '4:string', '5:Author', '6:book', '6:error'], 'built-in and declared types, not sql.DB or time.Time');
+const sameName = [
+  'lang: go', //                  0
+  '@internal/models/book.go', //  1
+  "  // decided: internal/models, not cmd/internal/models (sqlite can't import cmd/internal)", // 2
+  '  - : book ', //               3
+  '    - id: int', //             4
+  '@internal/store/store.go', //  5
+  '  - CreateBook(:book)', //     6
+].join('\n');
+assert.strictEqual(indexSymbols(parseOutline(sameName)).get('book')?.kind, 'type', 'a type wins over a file with the same name');
+assert.deepStrictEqual(typeSpans(sameName, parseOutline(sameName)).map((s) => `${s.line}:${s.start}`), ['4:10', '6:16'], 'CreateBook(:book) colors book');
+assert.ok(builtinTypes(models).includes('float64') && !builtinTypes(models).includes('i32'));
+assert.ok(builtinTypes('lang: rust').includes('i32') && builtinTypes('no lang').includes('i32'));
+assert.ok(inTypePosition('    - id: in', 12) && inTypePosition('- Save(b bo', 11));
+assert.ok(!inTypePosition('    - id: in', 7) && !inTypePosition('  - : bo', 8) && !inTypePosition('- read the input', 10));
 
 console.log('ok');

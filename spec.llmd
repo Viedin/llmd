@@ -196,3 +196,47 @@ lang: typescript
 
 @README.md
   - describe the new Enter behaviour
+
+## [x] Types and project-wide @ search
+
+// "- : Book" declares a type like ": Book". Types after ":" are completed and colored. @ finds any file in the project.
+
+@src/outline.ts
+  - parseOutline(text: string) -> OutlineNode[]
+    - a "- : Name" line is a type, like ": Name"
+
+@syntaxes/llmd.tmLanguage.json
+  - color "- : Name" like ": Name"
+
+@language-configuration.json
+  - on Enter after a "- : Name" line, indent one level and start the line with "- "
+
+@src/symbols.ts
+  - indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
+    - a type wins over a unit with the same name, so type book in book.go is a type
+  - builtinTypes(text: string) -> string[]
+    - the everyday built-in types for the spec's "lang:" line, or every language's when it has none
+  - inTypePosition(line: string, col: number) -> boolean
+    - after "- name:" in a field, or after the name in "- name(...)"
+  - typeSpans(text: string, nodes: OutlineNode[]) -> { line: number; start: number; end: number }[]
+    - built-in and declared type names in field types and method signatures; skip qualified names like time.Time
+
+@src/extension.ts
+  - completeNames(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.CompletionItem[]
+    - in a type position, offer declared types first, then symbols.builtinTypes; ":" also triggers it
+  - activate(context: vscode.ExtensionContext)
+    - color symbols.typeSpans as semantic "type" tokens, with semantic highlighting on for llmd
+    - right after @ or a line-start +, offer every file and folder in the project, skipping .git, node_modules and build output
+    - after a "/", keep walking one folder level at a time
+
+@src/test.ts
+  - check "- : Name" in the outline, typeSpans, builtinTypes and inTypePosition
+
+@src/e2e.ts
+  - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
+
+@README.md
+  - "- : Name", folder units, @ search and type help
+
+@skills/llmd/SKILL.md
+  - "- : Name" and folder units in the syntax table
