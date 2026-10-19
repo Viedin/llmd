@@ -54,7 +54,7 @@ Build the extension and install it into your normal VS Code, then reload the win
 ```bash
 npm install
 npx @vscode/vsce package --no-rewrite-relative-links
-code --install-extension llmd-0.0.3.vsix --force
+code --install-extension llmd-0.0.4.vsix --force
 ```
 
 Link the skill and the CLI to this repo, so edits apply straight away (`npm run compile` after changing the CLI):
