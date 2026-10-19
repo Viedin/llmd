@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { OutlineNode, parseOutline } from './outline';
-import { findRefs } from './refs';
+import { findRefs, projectOf } from './refs';
 import { findCalls, indexSymbols, inPath } from './symbols';
 
 const text = [
@@ -15,6 +15,12 @@ const text = [
 const refs = findRefs(text);
 assert.deepStrictEqual(refs.map((r) => r.path), ['api/upload.go', 'internal/sync/', './pkg/util.go']);
 for (const r of refs) assert.strictEqual(text.slice(r.start, r.end), '@' + r.path);
+
+assert.strictEqual(projectOf('/code/app/.llmd/flow.llmd'), '/code/app');
+assert.strictEqual(projectOf('/code/app/.llmd/sub/flow.llmd'), '/code/app');
+assert.strictEqual(projectOf('C:\\code\\app\\.llmd\\flow.llmd'), 'C:/code/app');
+assert.strictEqual(projectOf('/code/app/flow.llmd'), undefined);
+assert.strictEqual(projectOf('/code/.llmd'), undefined);
 
 const spec = [
   '# Sync', //                          0
@@ -80,5 +86,6 @@ assert.deepStrictEqual(calls.map((c) => `${c.line}:${c.start}-${c.end} ${c.name}
   '2:8-21 vscode.window',
 ]);
 assert.ok(inPath('- read @src/refs.ts', 10) && !inPath('- read @src/refs.ts', 3));
+
 
 console.log('ok');

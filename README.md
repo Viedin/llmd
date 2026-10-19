@@ -45,10 +45,11 @@ Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply
 ## 2. Start a project
 
 1. Open the project **folder** in VS Code with File → Open Folder, so `@` completion lists your files.
-2. Create a spec at the root, e.g. `flow.llmd`.
-3. Optionally, add this line to the project's `CLAUDE.md`, so Claude keeps the spec in mind even when you don't mention it:
+2. Create a spec in a `.llmd/` folder at the project root, e.g. `.llmd/flow.llmd`. That's where the agent looks when you don't name a spec, and `@` paths in it still start from the project root.
+3. Decide whether to commit the specs. Committed, they're a history of what you planned. To keep them to yourself, add `.llmd/` to the project's `.gitignore`, or to your global one (`~/.config/git/ignore`) to skip them in every repo, e.g. at work.
+4. Optionally, add this line to the project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex), so the agent keeps the spec in mind even when you don't mention it:
    ```
-   The architecture is described in @flow.llmd, one ## step at a time. Keep it up to date when changing code.
+   The architecture is described in .llmd/flow.llmd, one ## step at a time. Keep it up to date when changing code.
    ```
 
 ## 3. Write a spec
@@ -59,7 +60,7 @@ Indent with 2 spaces. Each line belongs to the line above it that has less inden
 
 Each `##` heading is a **step**: one piece of work, like an issue.
 
-- `## [ ] Title` is an open step. `## [x] Title` is a done one.
+- `## Title` is an open step. Once it's built, the agent ticks it: `## [x] Title`. You can write `## [ ] Title` if you like the box, it means the same.
 - Everything down to the next `##` belongs to the step, including `###` subsections.
 - Anything above the first step (the title, `lang:`, general `// notes`) is context for every step.
 - The same file can appear in several steps. Each step says what *that* step adds or changes in it.
@@ -71,7 +72,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 |---|---|---|
 | `# Title` | The spec's title. | Heading color. Shows in the outline. |
 | `lang: csharp` | The language and stack, once at the top. | Nothing. It's for Claude. |
-| `## [ ] Title` | A step. `[x]` once it's done. | Shows in the outline. A done step is greyed out. |
+| `## Title` | A step. The agent makes it `## [x] Title` once it's done. | Shows in the outline. A done step is greyed out. |
 | `@Program.cs` | An **existing** file. Lines under it say what it has or should get. | Ctrl+click opens the file. A warning if the file doesn't exist. |
 | `+HandleUser.cs` | A **new** file to create. | Shown as "new file" in the outline. |
 | `: Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. |
@@ -99,7 +100,7 @@ lang: csharp
   // decided: regular terminal
   // decided: handleInput reads the choice and two numbers, prints the result, then prompts again
 
-## [ ] More user interactions
+## More user interactions
 +HandleUser.cs
   - ReadUserInput()
     - read the input like before
@@ -115,7 +116,7 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 
 ### Editor help while you write
 
-- **`@`** lists the files and folders in your project. Type `/` to go into a folder. Paths start from the folder you have open, or from the `.llmd` file's own folder if you opened just the file.
+- **`@`** lists the files and folders in your project. Type `/` to go into a folder. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. Enter on an empty `- ` removes it and steps back out one level.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
@@ -134,11 +135,11 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 
 ### Implement a step
 
-In Claude Code, in the project folder:
+In Claude Code or Codex, in the project folder:
 
-- `implement the next step in @flow.llmd` builds the first `## [ ]` step from the top.
-- `implement "More user interactions" in @flow.llmd` builds a step by name.
-- `implement ReadUserInput in @flow.llmd` builds just one method of a step.
+- `implement the next step` builds the first step without `[x]`, from the spec in `.llmd/`. With several specs there, name one: `implement the next step in .llmd/flow.llmd`.
+- `implement "More user interactions"` builds a step by name.
+- `implement ReadUserInput` builds just one method of a step.
 
 ### Answer the questions
 
@@ -155,7 +156,7 @@ Your answers go into the step as `// decided: ...` lines, so each step keeps its
 
 Claude builds the step top-down, one file at a time, and reports back. Check:
 
-- **The step tick.** Claude ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
+- **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
 - **`+` becomes `@`.** Once Claude creates a new file, its line changes from `+` to `@`.
 - **The code itself.** Look at the diff the same way you'd review a pull request.
 
@@ -167,12 +168,12 @@ In a git repo, Claude offers to commit each finished step, with the step's title
 
 ### Change your mind
 
-- **Something in a done step is wrong:** add a new step that fixes it, e.g. `## [ ] Fix division by zero`. That keeps the history honest.
-- **To redo a step entirely:** edit it, change `## [x]` back to `## [ ]`, and ask Claude to implement it again.
+- **Something in a done step is wrong:** add a new step that fixes it, e.g. `## Fix division by zero`. That keeps the history honest.
+- **To redo a step entirely:** edit it, remove its `[x]`, and ask Claude to implement it again.
 
 ### Start from existing code
 
-`describe @src as llmd` writes a spec of code that already exists, as one `## [x] Existing code` step. Add your next steps below it as `## [ ]`.
+`describe @src as llmd` writes a spec of code that already exists to `.llmd/`, as one `## [x] Existing code` step. Add your next steps below it.
 
 ## 5. Work on the extension itself
 

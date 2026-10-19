@@ -1,11 +1,13 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OutlineNode, parseOutline } from './outline';
-import { findRefs } from './refs';
+import { findRefs, projectOf } from './refs';
 import { findCalls, indexSymbols, inPath } from './symbols';
 
-// @paths resolve from the workspace folder, like Claude Code's @ mentions.
+// @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 function rootOf(doc: vscode.TextDocument): vscode.Uri {
+  const project = projectOf(doc.uri.fsPath);
+  if (project) return vscode.Uri.file(project);
   const ws = vscode.workspace.getWorkspaceFolder(doc.uri);
   return ws ? ws.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
 }

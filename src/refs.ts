@@ -25,3 +25,10 @@ export function findRefs(text: string): Ref[] {
   }
   return refs;
 }
+
+// A spec inside a .llmd/ folder belongs to the project that holds that folder.
+export function projectOf(file: string): string | undefined {
+  const parts = file.split(/[\\/]/);
+  const i = parts.lastIndexOf('.llmd', parts.length - 2);
+  return i > 0 ? parts.slice(0, i).join('/') : undefined;
+}

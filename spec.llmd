@@ -119,3 +119,26 @@ lang: typescript
 
 @HOWTO.md
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step
+
+## [x] Specs in .llmd/, steps without a box
+
+// A spec lives in .llmd/ at the project root, so it can be gitignored. A bare "## Title" is an open step.
+
+@src/refs.ts
+  - projectOf(file: string) -> string | undefined
+    - the folder that holds the nearest .llmd/ folder above the file, or undefined
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - resolve @paths from refs.projectOf when the spec is in .llmd/, else from the workspace folder as before
+
+@src/test.ts
+  - check projectOf with / and \ paths, nested folders, and a spec outside .llmd/
+
+@skills/llmd/SKILL.md
+  - look for specs in .llmd/ when the user names none; ask if there are several; write new specs there
+  - "## Title" is an open step, same as "## [ ] Title"; ticking makes it "## [x] Title"
+
+@README.md
+  - specs go in .llmd/, with a tip on gitignoring it per repo or globally
+  - steps without [ ], and prompts that don't need the spec's path
