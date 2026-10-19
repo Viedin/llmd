@@ -9,5 +9,5 @@ out/cli.js
 .vscode-test/**
 *.vsix
 skills/**
-spec.llmd
+.llmd/**
 example.llmd

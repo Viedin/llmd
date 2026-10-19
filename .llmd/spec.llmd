@@ -227,3 +227,39 @@ lang: typescript
 @README.md
   - drift warnings under Editor help, and that they need the language's extension installed
   - in Known limits: only names are checked, not signatures or logic
+
+## Free lines
+
+// "-" lines say how, and the user designs it. "*" lines say what, and the agent designs it. Mix them per line.
+// After building, the agent turns each "*" into the "-" lines it built, so Current state stays structural and checkable.
+
+@skills/llmd/SKILL.md
+  - "* line" in the syntax table: a requirement the agent designs itself, under a unit, a type, a method or the step
+  - for "*" lines, decide instead of asking; ask only at a real fork, like two designs with different trade-offs
+  - before ticking, replace each "*" line with the "-" lines it built: units, types, signatures and short logic
+    - the user's wording survives in the archive, so nothing is lost
+  - this replacement is one more spec edit the agent may make on its own
+  - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
+  ? may a "*" line at step level, with no unit above it, let the agent choose which files to touch
+  ? propose the design and wait for an OK before writing code, or build and report the decisions
+
+@syntaxes/llmd.tmLanguage.json
+  - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
+
+@language-configuration.json
+  - on Enter after a "* " line, start a "* " at the same indent
+
+@src/extension.ts
+  - enter(editor: vscode.TextEditor)
+    - an empty "* " line steps out like an empty "- ", keeping its "* "
+
+@src/cli.ts
+  - main(args: string[])
+    - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
+
+@src/e2e.ts
+  - check "* " coloring and Enter after a "* " line
+
+@README.md
+  - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
+  - that the agent replaces "*" lines with what it built before the step is folded

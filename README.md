@@ -209,7 +209,7 @@ In a git repo, Claude offers to commit each finished step, with the step's title
 
 ## 5. Work on the extension itself
 
-The extension is described in its own format in [spec.llmd](spec.llmd).
+The extension is described in its own format in [.llmd/spec.llmd](.llmd/spec.llmd), with the finished steps in [.llmd/archive/](.llmd/archive/spec.llmd).
 
 - `npm test` checks the parsers (paths, outline, symbols).
 - `npm run test:e2e` starts a separate copy of VS Code and checks completion, warnings, colors, Enter, dimming, the outline and Ctrl+click. The first run downloads that copy into `.vscode-test/`.
