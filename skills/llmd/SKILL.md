@@ -1,6 +1,6 @@
 ---
 name: llmd
-description: Read, write and implement .llmd files, a markdown-based spec format where the user describes work as steps (## headings) of files, types, methods and logic, top-down, and Claude implements one step at a time. Use whenever a .llmd file is mentioned, opened or referenced with @, when asked to implement a spec or "the next step", or when asked to describe existing code "as llmd".
+description: Read, write and implement .llmd files, a markdown-based spec format where the user describes work as steps (## headings) of files, types, methods and logic, top-down, and the agent implements one step at a time. Use whenever a .llmd file is mentioned, opened or referenced with @, when asked to implement a spec or "the next step", or when asked to describe existing code "as llmd".
 ---
 
 # LLMD

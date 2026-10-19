@@ -17,7 +17,7 @@ Build it and install it into your normal VS Code:
 
 ```bash
 npm install
-npx @vscode/vsce package --allow-missing-repository --skip-license
+npx @vscode/vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links
 code --install-extension llmd-0.0.1.vsix --force
 ```
 
@@ -27,13 +27,20 @@ Run the same three commands again after you change the extension's code.
 
 ### The skill
 
-Link the skill folder into Claude Code's skills folder. Run this in PowerShell:
+Link the skill folder into your agent's skills folder. Run from this repo:
+
+```bash
+ln -sfn "$PWD/skills/llmd" ~/.claude/skills/llmd   # Claude Code
+ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd    # Codex
+```
+
+On Windows (PowerShell), use a junction instead:
 
 ```powershell
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\llmd" -Target "C:\Users\filip\code\typescript\llmd\skills\llmd"
 ```
 
-Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply in every project straight away. New Claude Code sessions list `llmd` among their skills.
+Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply in every project straight away. New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
 
 ## 2. Start a project
 
