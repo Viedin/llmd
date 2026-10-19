@@ -463,3 +463,32 @@
 
 @README.md
   - the Plan button, the plan command setting, and that clicks reuse the running session per mode
+
+## [x] Check lines
+@syntaxes/llmd.tmLanguage.json
+  - color "! ..." lines: the "!" like a keyword, the text with a scope of its own; @refs and inline markdown still work inside
+
+@language-configuration.json
+  - on Enter after a "! " line, start a "! " at the same indent
+
+@src/extension.ts
+  - enter(editor: vscode.TextEditor)
+    - an empty "! " line steps out like an empty "- ", keeping its "! "
+
+@skills/llmd/SKILL.md
+  - "! line" in the syntax table: a check that must hold once the step is built, under a unit, type, method or the step
+  - before ticking, verify every "!" line in the step: as a test when the project has tests, else by running or reading the code
+  - don't tick while a check fails; report it instead
+  - the report lists each check and how it was verified
+  - planning suggests "!" lines for what the step should prove
+  // decided: the agent never rewrites "!" lines; they're the user's, unlike "*" lines
+
+@README.md
+  - "! line" in the line types table, and a short section on checks with an example
+  - the review list says the agent verified every "!" line
+
+@src/test.ts
+  - check fold keeps "!" lines under a method and drops step-level ones to the archive
+
+@src/e2e.ts
+  - check "! " coloring and Enter after a "! " line

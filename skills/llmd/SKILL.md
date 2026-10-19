@@ -33,6 +33,7 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `* some line` | A **free line**: what should happen, and you design how. Under a unit, type or method, or at step level, where you also choose the files. |
 | `Name.Method` inside a logic line | A call to another unit's method. |
 | `@path` inside any line | A reference: read that file or folder for context. |
+| `! some line` | A **check**: something that must hold once the step is built. Under a unit, type or method, or at step level for the step as a whole. You verify it before ticking; you never rewrite it. |
 | `? question` | An open question. It blocks the step it sits in. |
 | `- ~Name()`, `~@old.go`, `- ~line` | A removal: once the step is folded, the matching method, unit or logic line leaves the snapshot. A rename is a `~` of the old name plus the new one. Build it by deleting that code. |
 | `// note` | A note from the user. Context only, never a task. |
@@ -83,19 +84,20 @@ lang: go
 8. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
 9. **Replace each `*` line with what you built**, as ordinary lines: `@` or `+` units, types, signatures and short logic, in the same place. Do it before ticking, so the snapshot holds structure, not prose. The user's wording stays in the archive.
 10. **Make the step true before ticking.** Once folded, the spec must describe the code exactly as it is. Compare the step with `## [x] Current state`: for every line there that your code changed or removed, add a `~` line for it in the step (a changed logic line is a `~` of the old line plus the new one). A line with parentheses is read as a method, so write a record's or class's data as fields (`- Id: int`), not as `- record(Id, Name)`.
-11. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
-12. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
-13. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
-14. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
-15. **Report back** with what you built, whether you ticked the step, and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
+11. **Verify every `!` line in the step.** Write a test for it when the project has tests, otherwise check it by running the code or reading it closely. If a check fails and you can't make it pass within the step, don't tick: report which check fails and why.
+12. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests and `!` checks pass). Don't add `[x]` to methods.
+13. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
+14. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
+15. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+16. **Report back** with what you built, whether you ticked the step, each `!` check and how you verified it (which test, or what you ran), and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
 
 ## Planning a step
 
 "Plan the step" (or "plan the next step") means talk it through with the user before anything is built:
 
 1. **Read first**, exactly as for implementing: the whole spec, the step's files and references, and the other specs' step titles.
-2. **Discuss.** Raise everything at once: what's unclear or contradicts the code, what's missing (error cases, tests, files the step will have to touch), and what clashes with other specs. Answer the step's `?` lines with options, not just questions back.
-3. **Propose concrete spec edits:** `?` lines, new or changed lines, `~` lines, or whole new steps. Make them only once the user agrees.
+2. **Discuss.** Raise everything at once: what's unclear or contradicts the code, what's missing (error cases, `!` checks the step should prove, files the step will have to touch), and what clashes with other specs. Answer the step's `?` lines with options, not just questions back.
+3. **Propose concrete spec edits:** `?` lines, `!` checks, new or changed lines, `~` lines, or whole new steps. Make them only once the user agrees.
 4. **Never write code** while planning. The step is built later, with "implement".
 
 ## Writing a spec from existing code

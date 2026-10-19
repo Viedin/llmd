@@ -60,6 +60,7 @@ async function checkHighlighting() {
     '? what now',
     '// a note',
     '* should be fast, see @docs/y.md',
+    '! returns 0 for empty input',
   ].join('\n');
   const { doc } = await openTemp('fixture.llmd', text);
 
@@ -74,6 +75,8 @@ async function checkHighlighting() {
   assert.match(scopes('@docs/x.md'), /string\.other\.path\.llmd/);
   assert.match(scopes('should be fast, see'), /markup\.italic\.free\.llmd/);
   assert.match(scopes('@docs/y.md'), /string\.other\.path\.llmd/, '@refs still work in a free line');
+  assert.match(scopes('!'), /keyword\.control\.check\.llmd/);
+  assert.match(scopes('returns 0 for empty input'), /markup\.inserted\.check\.llmd/);
   assert.ok(!tokens.some((t) => t.t.includes('markup.raw')), 'deep lines must not become markdown code blocks');
 
   assert.deepStrictEqual(doneLines(text), [3, 4, 5]);
@@ -130,6 +133,12 @@ async function checkEnter() {
   assert.strictEqual(doc.lineAt(4).text, '    * ', 'Enter after a free line continues it');
   await pressEnter();
   assert.strictEqual(doc.lineAt(4).text, '  * ', 'an empty free line steps out and keeps the *');
+
+  await editor.edit((e) => e.replace(doc.lineAt(4).range, '    ! returns 0'));
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(5).text, '    ! ', 'Enter after a check continues it');
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(5).text, '  ! ', 'an empty check steps out and keeps the !');
 }
 
 async function checkSymbols() {

@@ -94,6 +94,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `* should also log` | A **free line**: what should happen, and the agent designs how. Works under a file, type or method, or on its own in a step. | Italic. |
 | `HandleUser.ReadUserInput` in a line | A call to another method in the spec. | Ctrl+click jumps to it. A warning if a declared type has no such member. |
 | `@docs/notes.md` in a line | "Read this for context." | Ctrl+click opens it. A warning if it doesn't exist. |
+| `! returns 0 for empty input` | A **check**: something that must hold once the step is built. The agent proves it before ticking. | Green. |
 | `? use doubles or decimals` | An open question. The agent must ask you before building that step. | Highlighted. |
 | `- ~Stop()`, `~@Old.cs`, `- ~line` | A removal. The agent deletes that code, and folding the step removes it from the snapshot. | Nothing special. |
 | `// a note` | A note for context. The agent reads it but never treats it as a task. | Comment color. |
@@ -148,13 +149,31 @@ A `-` line says how: you design it. A `*` line says what: the agent designs it. 
 - The agent decides instead of asking, and only asks when two designs have real trade-offs. Its report lists what it decided.
 - Before ticking the step, the agent replaces each `*` line with the `-` lines it actually built. So `## [x] Current state` stays a map of the code, and your `*` wording is kept in the archive.
 
+### Say what done means
+
+A `!` line is a check: something that must be true once the step is built. Put it under a method, type or file, or on its own in a step for the step as a whole:
+
+```
+## Divide
+@Calculator.cs
+  - Divide(a, b) -> double
+    - return a / b
+    ! dividing by 0 throws, it doesn't return infinity
+
+! dotnet test passes
+```
+
+- Before ticking, the agent verifies every check: as a test when the project has tests, otherwise by running or reading the code. Its report says how it verified each one.
+- A failing check blocks the tick. The agent reports it instead.
+- Unlike `*` lines, the agent never rewrites checks. Checks under a file, type or method stay in `## [x] Current state`, so they keep describing the code. Step-level checks go to the archive with the step.
+
 ### Editor help while you write
 
 - **`@`** searches every file and folder in your project: `@book` finds `cmd/internal/models/book.go`. Type `/` to go into a folder one level at a time. A `+` at the start of a line does the same, for new files in existing folders. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
 - **Types:** after `- id:`, in a method's parameters and after `->`, completion offers the types declared in the spec first, then the built-in types for its `lang:`. Those names are colored as types, so a misspelled type stays plain.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
-- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` or `* ` line, Enter starts a new one at the same level.
-- **Enter on an empty `- ` or `* `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
+- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- `, `* ` or `! ` line, Enter starts a new one at the same level.
+- **Enter on an empty `- `, `* ` or `! `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
 - **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first (see [Work with the agent](#4-work-with-the-agent)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
@@ -206,9 +225,10 @@ Your answers go into the step as `// decided: ...` lines, so each step keeps its
 
 The agent builds the step top-down, one file at a time, and reports back. Check:
 
-- **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
+- **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests and `!` checks pass. The step then greys out.
 - **`+` becomes `@`.** Once the agent creates a new file, its line changes from `+` to `@`.
 - **`~` lines.** Before ticking, the agent adds a `~` for every line in Current state that its code changed or removed, so the snapshot stays true.
+- **`!` checks.** The report says how each check was verified: which test covers it, or what the agent ran.
 - **`*` becomes `-`.** Each free line is replaced by what the agent built for it. Check the design in its report along with the diff.
 - **The snapshot.** After ticking, the agent runs `llmd snapshot`, so the step moves into `## [x] Current state`. It warns if a step still had `*` lines.
 - **The code itself.** Look at the diff the same way you'd review a pull request.

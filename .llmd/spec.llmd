@@ -112,6 +112,7 @@ lang: typescript
     // inherited members like DbContext.Database and file names like BookService.cs in prose aren't typos
   - enter(editor: vscode.TextEditor)
     - an empty "* " line steps out like an empty "- ", keeping its "* "
+    - an empty "! " line steps out like an empty "- ", keeping its "! "
   - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
     - group symbols.claims by path; for each file, get its symbols with vscode.executeDocumentSymbolProvider
     - flatten the symbol tree to names, without parameter lists or receivers, so "Add(double, double)" and "(*Book).Save" become "Add" and "Save"
@@ -133,6 +134,7 @@ lang: typescript
   - on Enter after any other "- " line, start a "- " at the same indent
   - on Enter after a "- : Name" line, indent one level and start the line with "- "
   - on Enter after a "* " line, start a "* " at the same indent
+  - on Enter after a "! " line, start a "! " at the same indent
 
 @syntaxes/llmd.tmLanguage.json
   - color @path and +path unit lines like file names
@@ -142,6 +144,7 @@ lang: typescript
   // decided: LLMD lines win over markdown; tables, quotes and numbered lists lose markdown colors
   - color "- : Name" like ": Name"
   - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
+  - color "! ..." lines: the "!" like a keyword, the text with a scope of its own; @refs and inline markdown still work inside
 
 @src/test.ts
   - check findRefs, parseOutline, indexSymbols and findCalls on small specs
@@ -153,6 +156,7 @@ lang: typescript
   - check claims: done vs open steps, @ vs + units, types and methods
   - check closest: a typo, a case slip, nothing close, short names
   - check stepPrompt for both modes, and agentCommand quoting with the new arguments
+  - check fold keeps "!" lines under a method and drops step-level ones to the archive
 
 @src/e2e.ts
   - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
@@ -166,6 +170,7 @@ lang: typescript
   - an open step listing a missing function gets no warning
   - the typo warning suggests the declared member; an undeclared member that isn't a typo doesn't warn
   - check that Plan shows next to Implement on open steps only
+  - check "! " coloring and Enter after a "! " line
 
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
@@ -196,6 +201,12 @@ lang: typescript
   - adding those "~" lines is one more spec edit the agent may make on its own
   - "plan the step" reads like implementing, then discusses: what's unclear, what's missing, what clashes with the code or other specs
   - it proposes concrete spec edits (? lines, new lines, new steps) and makes them only once the user agrees; it never writes code
+  - "! line" in the syntax table: a check that must hold once the step is built, under a unit, type, method or the step
+  - before ticking, verify every "!" line in the step: as a test when the project has tests, else by running or reading the code
+  - don't tick while a check fails; report it instead
+  - the report lists each check and how it was verified
+  - planning suggests "!" lines for what the step should prove
+  // decided: the agent never rewrites "!" lines; they're the user's, unlike "*" lines
 
 @README.md
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
@@ -218,6 +229,8 @@ lang: typescript
   - the archive isn't drift-checked
   - the Plan button, the plan command setting with a Codex example, and that clicks reuse the running session per mode
   - written for any agent: "the agent", not "Claude"
+  - "! line" in the line types table, and a short section on checks with an example
+  - the review list says the agent verified every "!" line
 
 @src/agent.ts
   - agentCommand(command: string, prompt: string, shell: string) -> string

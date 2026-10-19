@@ -163,10 +163,12 @@ const history = fold([
   '    - read input',
   '    - save to History',
   '    - ~print result',
+  '    ! history keeps the newest item last',
   '  - ~old()',
   '  // decided: keep 10 items',
   '### Notes',
   '// decided: no persistence',
+  '! go test passes',
   '',
   '## Open step',
   '@main.go',
@@ -183,6 +185,7 @@ assert.strictEqual(history.text, [
   '  - run() -> error',
   '    - read input',
   '    - save to History',
+  '    ! history keeps the newest item last',
   '  // decided: keep 10 items',
   '',
   '@history.go',
@@ -197,7 +200,7 @@ assert.strictEqual(history.text, [
   '',
 ].join('\n'));
 assert.strictEqual(history.folded.length, 1);
-assert.ok(history.folded[0].startsWith('## [x] Add history') && history.folded[0].includes('dropped'));
+assert.ok(history.folded[0].startsWith('## [x] Add history') && history.folded[0].includes('dropped') && history.folded[0].includes('! go test passes'));
 
 const fresh = fold('# T\r\n\r\n## [x] One\r\n+a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n');
 assert.strictEqual(fresh.text, '# T\r\n\r\n## [x] Current state\r\n\r\n@a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n',

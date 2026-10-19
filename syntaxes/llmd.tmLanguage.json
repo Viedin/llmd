@@ -40,6 +40,17 @@
       ]
     },
     {
+      "comment": "A check: what must hold once the step is built. Green like an added diff line.",
+      "begin": "^\\s*(!)(?=\\s)",
+      "end": "$",
+      "beginCaptures": { "1": { "name": "keyword.control.check.llmd" } },
+      "contentName": "markup.inserted.check.llmd",
+      "patterns": [
+        { "name": "string.other.path.llmd", "match": "(?<![\\w@])@[\\w\\-./]+" },
+        { "include": "text.html.markdown#inline" }
+      ]
+    },
+    {
       "match": "^\\s*(-)\\s",
       "captures": { "1": { "name": "punctuation.definition.list.begin.markdown" } }
     },
