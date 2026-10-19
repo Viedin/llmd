@@ -1,11 +1,11 @@
 # LLMD how-to
 
-LLMD is a way to steer the architecture without writing the code yourself. In a `.llmd` file you describe the files, types, methods and logic you want, top-down, the way code flows. You split the work into **steps**, like issues, and Claude builds one step at a time.
+LLMD is a way to steer the architecture without writing the code yourself. In a `.llmd` file you describe the files, types, methods and logic you want, top-down, the way code flows. You split the work into **steps**, like issues, and your coding agent (Claude Code, Codex, ...) builds one step at a time.
 
 There are two parts:
 
 - **The VS Code extension.** It makes `.llmd` files feel like a language: highlighting, `@` file completion, an outline, Ctrl+click and warnings.
-- **The Claude Code skill.** It teaches Claude what the syntax means and how to implement a step: ask first, stay inside the step, tick it when it's done.
+- **The agent skill.** It teaches the agent what the syntax means and how to implement a step: ask first, stay inside the step, tick it when it's done.
 
 ## 1. Install
 
@@ -57,10 +57,11 @@ After you change the CLI's code, `npm run compile` is enough: the link points at
 1. Open the project **folder** in VS Code with File → Open Folder, so `@` completion lists your files.
 2. Create a spec in a `.llmd/` folder at the project root, e.g. `.llmd/flow.llmd`. That's where the agent looks when you don't name a spec, and `@` paths in it still start from the project root.
 3. Decide whether to commit the specs. Committed, they're a history of what you planned. To keep them to yourself, add `.llmd/` to the project's `.gitignore`, or to your global one (`~/.config/git/ignore`) to skip them in every repo, e.g. at work.
-4. Optionally, add this line to the project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex), so the agent keeps the spec in mind even when you don't mention it:
+4. Optionally, add this line to the project's `AGENTS.md`, so the agent keeps the spec in mind even when you don't mention it:
    ```
    The architecture is the "## [x] Current state" step of .llmd/flow.llmd; the ## steps below it are planned work. Keep it up to date when changing code.
    ```
+   Codex reads `AGENTS.md` on its own. For Claude Code, also add a `CLAUDE.md` holding just `@AGENTS.md`, which pulls the file in. So both agents share one file.
 
 ## 3. Write a spec
 
@@ -81,7 +82,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | You write | It means | What the editor does |
 |---|---|---|
 | `# Title` | The spec's title. | Heading color. Shows in the outline. |
-| `lang: csharp` | The language and stack, once at the top. | Nothing. It's for Claude. |
+| `lang: csharp` | The language and stack, once at the top. | Nothing. It's for the agent. |
 | `## Title` | A step. The agent makes it `## [x] Title` once it's done. | Shows in the outline. A done step is greyed out. |
 | `## [x] Current state` | The snapshot: the whole architecture as built. `llmd snapshot` keeps it up to date. | Like any done step. |
 | `@Program.cs` | An **existing** file. Lines under it say what it has or should get. | Ctrl+click opens the file. A warning if the file doesn't exist. |
@@ -90,14 +91,14 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `- total: double` | A field (no parentheses). | Shows in the outline. |
 | `- Add(a, b) -> double` | A method or function (it has parentheses). `-> ...` is the return type and is optional. | Shows in the outline. |
 | `- line` under a method | Logic, in order. Say what should happen, not the exact code. | Nothing special. |
-| `* should also log` | A **free line**: what should happen, and Claude designs how. Works under a file, type or method, or on its own in a step. | Italic. |
+| `* should also log` | A **free line**: what should happen, and the agent designs how. Works under a file, type or method, or on its own in a step. | Italic. |
 | `HandleUser.ReadUserInput` in a line | A call to another method in the spec. | Ctrl+click jumps to it. A warning if a declared type has no such member. |
 | `@docs/notes.md` in a line | "Read this for context." | Ctrl+click opens it. A warning if it doesn't exist. |
-| `? use doubles or decimals` | An open question. Claude must ask you before building that step. | Highlighted. |
-| `- ~Stop()`, `~@Old.cs`, `- ~line` | A removal. Claude deletes that code, and folding the step removes it from the snapshot. | Nothing special. |
-| `// a note` | A note for context. Claude reads it but never treats it as a task. | Comment color. |
+| `? use doubles or decimals` | An open question. The agent must ask you before building that step. | Highlighted. |
+| `- ~Stop()`, `~@Old.cs`, `- ~line` | A removal. The agent deletes that code, and folding the step removes it from the snapshot. | Nothing special. |
+| `// a note` | A note for context. The agent reads it but never treats it as a task. | Comment color. |
 
-You can still put `[x]` on a single method (`- [x] Add(...)`) if you want to mark it done yourself, and it greys out. Claude doesn't add these, though: it only ticks steps.
+You can still put `[x]` on a single method (`- [x] Add(...)`) if you want to mark it done yourself, and it greys out. The agent doesn't add these, though: it only ticks steps.
 
 ### Example
 
@@ -125,11 +126,11 @@ lang: csharp
   - use HandleUser.ReadUserInput
 ```
 
-Reading it top-down: the basic calculator is done and greyed out, with its decisions kept inside it. The next step creates `HandleUser.cs` and changes `Program.cs` to use it. There's one open question for Claude to ask before it starts.
+Reading it top-down: the basic calculator is done and greyed out, with its decisions kept inside it. The next step creates `HandleUser.cs` and changes `Program.cs` to use it. There's one open question for the agent to ask before it starts.
 
-### Hand decisions to Claude
+### Hand decisions to the agent
 
-A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix them line by line, so you pin down the parts you care about and leave the rest:
+A `-` line says how: you design it. A `*` line says what: the agent designs it. Mix them line by line, so you pin down the parts you care about and leave the rest:
 
 ```
 ## Export
@@ -142,10 +143,10 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 * log every export somewhere sensible
 ```
 
-- Under a file, type or method, Claude chooses the methods, names and logic there.
-- On its own in a step, with no file above it, Claude also chooses which files to touch.
-- Claude decides instead of asking, and only asks when two designs have real trade-offs. Its report lists what it decided.
-- Before ticking the step, Claude replaces each `*` line with the `-` lines it actually built. So `## [x] Current state` stays a map of the code, and your `*` wording is kept in the archive.
+- Under a file, type or method, the agent chooses the methods, names and logic there.
+- On its own in a step, with no file above it, the agent also chooses which files to touch.
+- The agent decides instead of asking, and only asks when two designs have real trade-offs. Its report lists what it decided.
+- Before ticking the step, the agent replaces each `*` line with the `-` lines it actually built. So `## [x] Current state` stays a map of the code, and your `*` wording is kept in the archive.
 
 ### Editor help while you write
 
@@ -155,7 +156,7 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` or `* ` line, Enter starts a new one at the same level.
 - **Enter on an empty `- ` or `* `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
-- **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first (see [Work with Claude](#4-work-with-claude)).
+- **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first (see [Work with the agent](#4-work-with-the-agent)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and likely typos in `Type.member`, with a suggestion: `Debouncer.Pussh` → "Did you mean 'Push'?". A member that isn't close to a declared one, like an inherited `DbContext.Database`, doesn't warn.
 - **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked, and neither is `.llmd/archive/`, which describes the code as it was. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
@@ -165,10 +166,10 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 - **Keep steps small.** One step should be something you'd review in one sitting, like a single issue or pull request.
 - **Methods belong to a type only when indented under it.** At the same indent as `: Calculator`, they belong to the file instead.
 - **Fields and methods differ only by the parentheses.** `- total: double` is a field, `- Add(a, b)` is a method.
-- **Keep logic lines short and in order.** One action per line is easier for you to review and for Claude to follow.
+- **Keep logic lines short and in order.** One action per line is easier for you to review and for the agent to follow.
 - **Use `?` whenever you aren't sure.** It's cheaper than undoing a guess.
 
-## 4. Work with Claude
+## 4. Work with the agent
 
 ### Implement a step
 
@@ -178,7 +179,7 @@ Click **▶ Implement** above any open step. It saves the spec and starts your a
 
 Click **Plan** to talk a step through before building it. The agent reads the step, the files and the code like it would before implementing. Then it discusses: what's unclear, what's missing, and what clashes with the code or your other specs. It suggests concrete spec edits, such as `?` lines, new lines or whole new steps, and makes them once you agree. It never writes code in plan mode.
 
-It runs in its own **LLMD: Plan** terminal, separate from Implement, because a session in plan mode can't start building just by being sent a prompt. By default it runs `claude --permission-mode plan`. Change it with **LLMD: Plan Command** in VS Code's settings.
+It runs in its own **LLMD: Plan** terminal, separate from Implement, because a session in plan mode can't start building just by being sent a prompt. By default it runs `claude --permission-mode plan`. Change it with **LLMD: Plan Command** in VS Code's settings. For Codex, use `codex --sandbox read-only --ask-for-approval on-request`: it can read and discuss, and asks before it writes the spec edits you agreed on.
 
 Both terminals need VS Code's shell integration, which is on by default for zsh, bash, fish and PowerShell. Without it, every click opens a new terminal as before.
 
@@ -203,16 +204,16 @@ Your answers go into the step as `// decided: ...` lines, so each step keeps its
 
 ### Review
 
-Claude builds the step top-down, one file at a time, and reports back. Check:
+The agent builds the step top-down, one file at a time, and reports back. Check:
 
 - **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
-- **`+` becomes `@`.** Once Claude creates a new file, its line changes from `+` to `@`.
-- **`~` lines.** Before ticking, Claude adds a `~` for every line in Current state that its code changed or removed, so the snapshot stays true.
-- **`*` becomes `-`.** Each free line is replaced by what Claude built for it. Check the design in its report along with the diff.
-- **The snapshot.** After ticking, Claude runs `llmd snapshot`, so the step moves into `## [x] Current state`. It warns if a step still had `*` lines.
+- **`+` becomes `@`.** Once the agent creates a new file, its line changes from `+` to `@`.
+- **`~` lines.** Before ticking, the agent adds a `~` for every line in Current state that its code changed or removed, so the snapshot stays true.
+- **`*` becomes `-`.** Each free line is replaced by what the agent built for it. Check the design in its report along with the diff.
+- **The snapshot.** After ticking, the agent runs `llmd snapshot`, so the step moves into `## [x] Current state`. It warns if a step still had `*` lines.
 - **The code itself.** Look at the diff the same way you'd review a pull request.
 
-Claude only changes your spec in those six ways on its own: ticking the step, `+` → `@`, `// decided:` lines, replacing `*` lines, adding `~` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
+The agent only changes your spec in those six ways on its own: ticking the step, `+` → `@`, `// decided:` lines, replacing `*` lines, adding `~` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
 
 ### The snapshot
 
@@ -229,7 +230,7 @@ Without a spec name it uses the only spec in `.llmd/`. To start an older spec th
 
 ### Commit
 
-In a git repo, Claude offers to commit each finished step, with the step's title as the commit message. So your history reads like a list of closed issues. It only commits if you say yes.
+In a git repo, the agent offers to commit each finished step, with the step's title as the commit message. So your history reads like a list of closed issues. It only commits if you say yes.
 
 ### Change your mind
 

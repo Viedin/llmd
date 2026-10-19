@@ -205,10 +205,10 @@ lang: typescript
   - "- : Name", folder units, @ search and type help
   - say the agent skims the other specs, and asks about conflicting open steps
   - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
-  - the suggested CLAUDE.md line points at Current state as the architecture
+  - the suggested AGENTS.md line points at Current state as the architecture; Claude Code gets a CLAUDE.md that imports it
   - how to install the extension, the skill and the CLI
   - how to write a spec, with every line type and an example
-  - how to work with Claude from a spec: implement, answer ? questions, review, snapshot and commit
+  - how to work with the agent from a spec: implement, answer ? questions, review, snapshot and commit
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step
   - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
   - that the agent replaces "*" lines with what it built before the step is folded
@@ -216,7 +216,8 @@ lang: typescript
   - in Known limits: only names are checked, not signatures or logic
   - typo warnings only fire for likely typos, and say what was meant
   - the archive isn't drift-checked
-  - the Plan button, the plan command setting, and that clicks reuse the running session per mode
+  - the Plan button, the plan command setting with a Codex example, and that clicks reuse the running session per mode
+  - written for any agent: "the agent", not "Claude"
 
 @src/agent.ts
   - agentCommand(command: string, prompt: string, shell: string) -> string
