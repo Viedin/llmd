@@ -120,6 +120,7 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. Enter on an empty `- ` removes it and steps back out one level.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
+- **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and `Type.member` names that aren't declared.
 
@@ -135,7 +136,9 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 
 ### Implement a step
 
-In Claude Code or Codex, in the project folder:
+Click **▶ Implement** above any open step. It saves the spec and starts your agent on that step in a new terminal, at the project root. By default it runs `claude`. To use Codex, set **LLMD: Agent Command** in VS Code's settings to `codex`, or add flags, e.g. `codex --model gpt-5.5`.
+
+Or ask yourself in Claude Code or Codex, in the project folder:
 
 - `implement the next step` builds the first step without `[x]`, from the spec in `.llmd/`. With several specs there, name one: `implement the next step in .llmd/flow.llmd`.
 - `implement "More user interactions"` builds a step by name.

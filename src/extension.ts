@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { OutlineNode, parseOutline } from './outline';
+import { agentCommand } from './agent';
+import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { findCalls, indexSymbols, inPath } from './symbols';
 
@@ -139,6 +140,19 @@ async function enter(editor: vscode.TextEditor) {
   await vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
 }
 
+// Starts the agent in a new terminal, at the project root, on one step of the saved spec.
+async function implement(uri: vscode.Uri, step: string) {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  if (doc.isUntitled) return vscode.window.showWarningMessage('Save the spec first, so the agent can read it.');
+  await doc.save();
+  const root = rootOf(doc);
+  const file = path.relative(root.fsPath, doc.uri.fsPath).split(path.sep).join('/');
+  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || 'claude';
+  const terminal = vscode.window.createTerminal({ name: `LLMD: ${step}`, cwd: root });
+  terminal.show();
+  terminal.sendText(agentCommand(command, step, file, vscode.env.shell));
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const selector: vscode.DocumentSelector = { language: 'llmd' };
   const diagnostics = vscode.languages.createDiagnosticCollection('llmd');
@@ -168,6 +182,12 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('llmd.enter', () => {
       const editor = vscode.window.activeTextEditor;
       return editor ? enter(editor) : vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
+    }),
+
+    vscode.commands.registerCommand('llmd.implement', implement),
+    vscode.languages.registerCodeLensProvider(selector, {
+      provideCodeLenses: (doc) => openSteps(doc.getText()).map((s) => new vscode.CodeLens(doc.lineAt(s.line).range,
+        { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] })),
     }),
 
     vscode.languages.registerDocumentSymbolProvider(selector, {

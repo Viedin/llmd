@@ -71,3 +71,16 @@ export function parseOutline(text: string): OutlineNode[] {
   });
   return roots;
 }
+
+// "## Title" steps without [x]: the work left to build.
+export function openSteps(text: string): { title: string; line: number }[] {
+  const lines = text.split('\n');
+  const steps: { title: string; line: number }[] = [];
+  const walk = (nodes: OutlineNode[]) => nodes.forEach((n) => {
+    if (n.kind !== 'heading') return;
+    if (/^##\s/.test(lines[n.line]) && n.detail !== 'done') steps.push({ title: n.name, line: n.line });
+    walk(n.children);
+  });
+  walk(parseOutline(text));
+  return steps;
+}

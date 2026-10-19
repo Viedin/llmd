@@ -142,3 +142,34 @@ lang: typescript
 @README.md
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
   - steps without [ ], and prompts that don't need the spec's path
+
+## [x] Implement button
+
+// One click from a step to a running agent, for any agent CLI.
+
+@src/outline.ts
+  - openSteps(text: string) -> { title: string; line: number }[]
+    - every "##" heading from parseOutline that isn't done, with its title and line
+
+@src/agent.ts
+  - agentCommand(command: string, step: string, file: string, shell: string) -> string
+    - the command, then the prompt 'implement the step "<step>" in <file>' as one argument
+    - quote the prompt for pwsh, cmd or a POSIX shell, judged from the shell's path
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - show a "▶ Implement" code lens on every openSteps step
+    - on click, save the spec and run agent.agentCommand in a new terminal at the project root
+    - the command comes from the llmd.agentCommand setting, "claude" by default
+
+@package.json
+  - the llmd.agentCommand setting and the hidden llmd.implement command
+
+@src/test.ts
+  - check openSteps, and agentCommand quoting for zsh, pwsh and cmd
+
+@src/e2e.ts
+  - check that Implement shows on open ## steps only
+
+@README.md
+  - explain the Implement button and how to switch it to Codex

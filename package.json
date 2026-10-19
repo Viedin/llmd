@@ -30,11 +30,23 @@
       }
     },
     "commands": [
-      { "command": "llmd.enter", "title": "LLMD: Enter" }
+      { "command": "llmd.enter", "title": "LLMD: Enter" },
+      { "command": "llmd.implement", "title": "LLMD: Implement step" }
     ],
+    "configuration": {
+      "title": "LLMD",
+      "properties": {
+        "llmd.agentCommand": {
+          "type": "string",
+          "default": "claude",
+          "markdownDescription": "Command that starts your coding agent when you click **Implement** above a step. The step's prompt is added as one quoted argument. For example `claude`, `codex`, or `codex --model gpt-5.5`."
+        }
+      }
+    },
     "menus": {
       "commandPalette": [
-        { "command": "llmd.enter", "when": "false" }
+        { "command": "llmd.enter", "when": "false" },
+        { "command": "llmd.implement", "when": "false" }
       ]
     },
     "keybindings": [

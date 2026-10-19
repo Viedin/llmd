@@ -31,6 +31,7 @@ export async function run() {
   const labels = list.items.map((i) => (typeof i.label === 'string' ? i.label : i.label.label));
   assert.ok(labels.includes('src/') && labels.includes('package.json'), `@ completions: ${labels.join(', ')}`);
 
+  await checkCodeLens();
   await checkHighlighting();
   await checkEnter();
   await checkSymbols();
@@ -146,4 +147,11 @@ async function checkSymbols() {
     typos = vscode.languages.getDiagnostics(doc.uri).map((d) => d.message).filter((m) => m.includes('has no member'));
   }
   assert.deepStrictEqual(typos, ["Debouncer has no member 'Pussh'"]);
+}
+
+async function checkCodeLens() {
+  const { doc } = await openTemp('lens.llmd', '# Calc\n## [x] Basic\n## More input\n### Notes\n## [ ] Fix it');
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
+  assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.arguments?.[1]]), [[2, 'More input'], [4, 'Fix it']],
+    'Implement shows on open ## steps only');
 }

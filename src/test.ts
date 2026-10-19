@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { OutlineNode, parseOutline } from './outline';
+import { agentCommand } from './agent';
+import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { findCalls, indexSymbols, inPath } from './symbols';
 
@@ -87,5 +88,18 @@ assert.deepStrictEqual(calls.map((c) => `${c.line}:${c.start}-${c.end} ${c.name}
 ]);
 assert.ok(inPath('- read @src/refs.ts', 10) && !inPath('- read @src/refs.ts', 3));
 
+
+assert.deepStrictEqual(openSteps('# T\n## [x] Done\n## Open\n### Sub\n```\n## fenced\n```\n## [ ] Boxed'), [
+  { title: 'Open', line: 2 },
+  { title: 'Boxed', line: 7 },
+]);
+
+const step = `Don't spend $HOME`;
+assert.strictEqual(agentCommand('codex', step, '.llmd/a.llmd', '/bin/zsh'),
+  `codex 'implement the step "Don'\\''t spend $HOME" in .llmd/a.llmd'`);
+assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
+  `claude 'implement the step "Don''t spend $HOME" in a.llmd'`);
+assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Windows\\System32\\cmd.exe'),
+  `claude "implement the step 'Don't spend $HOME' in a.llmd"`);
 
 console.log('ok');
