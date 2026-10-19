@@ -8,10 +8,10 @@ export interface OutlineNode {
 }
 
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
-const UNIT = /^\s*([@+])([\w\-./]+)\s*$/;
-const TYPE = /^\s*(?:-\s+)?:\s*([A-Za-z_]\w*)/; // ": Book" or "- : Book"
-const METHOD = /^\s*-\s+(?:\[[ xX]\]\s+)?([A-Za-z_]\w*)(\(.*?\)(?:\s*->\s*.+?)?)\s*$/;
-const FIELD = /^\s*-\s+([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/;
+export const UNIT = /^\s*([@+])([\w\-./]+)\s*$/;
+export const TYPE = /^\s*(?:-\s+)?:\s*([A-Za-z_]\w*)/; // ": Book" or "- : Book"
+export const METHOD = /^\s*-\s+(?:\[[ xX]\]\s+)?([A-Za-z_]\w*)(\(.*?\)(?:\s*->\s*.+?)?)\s*$/;
+export const FIELD = /^\s*-\s+([A-Za-z_]\w*)\s*:\s*(.+?)\s*$/;
 
 export function parseOutline(text: string): OutlineNode[] {
   const roots: OutlineNode[] = [];

@@ -42,6 +42,16 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\llmd" -Target
 
 Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply in every project straight away. New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
 
+### The CLI
+
+The `llmd` command folds finished steps into the snapshot (see [The snapshot](#the-snapshot)). It doesn't need VS Code, so it works the same from Zed or any terminal. Run from this repo:
+
+```bash
+npm install && npm run compile && npm link
+```
+
+After you change the CLI's code, `npm run compile` is enough: the link points at this repo.
+
 ## 2. Start a project
 
 1. Open the project **folder** in VS Code with File → Open Folder, so `@` completion lists your files.
@@ -49,7 +59,7 @@ Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply
 3. Decide whether to commit the specs. Committed, they're a history of what you planned. To keep them to yourself, add `.llmd/` to the project's `.gitignore`, or to your global one (`~/.config/git/ignore`) to skip them in every repo, e.g. at work.
 4. Optionally, add this line to the project's `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex), so the agent keeps the spec in mind even when you don't mention it:
    ```
-   The architecture is described in .llmd/flow.llmd, one ## step at a time. Keep it up to date when changing code.
+   The architecture is the "## [x] Current state" step of .llmd/flow.llmd; the ## steps below it are planned work. Keep it up to date when changing code.
    ```
 
 ## 3. Write a spec
@@ -73,6 +83,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `# Title` | The spec's title. | Heading color. Shows in the outline. |
 | `lang: csharp` | The language and stack, once at the top. | Nothing. It's for Claude. |
 | `## Title` | A step. The agent makes it `## [x] Title` once it's done. | Shows in the outline. A done step is greyed out. |
+| `## [x] Current state` | The snapshot: the whole architecture as built. `llmd snapshot` keeps it up to date. | Like any done step. |
 | `@Program.cs` | An **existing** file. Lines under it say what it has or should get. | Ctrl+click opens the file. A warning if the file doesn't exist. |
 | `+HandleUser.cs` | A **new** file to create. A folder works too, e.g. `+cmd/internal/models` for a Go package. | Shown as "new file" in the outline. |
 | `: Calculator` or `- : Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. |
@@ -82,6 +93,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `HandleUser.ReadUserInput` in a line | A call to another method in the spec. | Ctrl+click jumps to it. A warning if a declared type has no such member. |
 | `@docs/notes.md` in a line | "Read this for context." | Ctrl+click opens it. A warning if it doesn't exist. |
 | `? use doubles or decimals` | An open question. Claude must ask you before building that step. | Highlighted. |
+| `- ~Stop()`, `~@Old.cs`, `- ~line` | A removal. Claude deletes that code, and folding the step removes it from the snapshot. | Nothing special. |
 | `// a note` | A note for context. Claude reads it but never treats it as a task. | Comment color. |
 
 You can still put `[x]` on a single method (`- [x] Add(...)`) if you want to mark it done yourself, and it greys out. Claude doesn't add these, though: it only ticks steps.
@@ -164,9 +176,23 @@ Claude builds the step top-down, one file at a time, and reports back. Check:
 
 - **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
 - **`+` becomes `@`.** Once Claude creates a new file, its line changes from `+` to `@`.
+- **The snapshot.** After ticking, Claude runs `llmd snapshot`, so the step moves into `## [x] Current state`.
 - **The code itself.** Look at the diff the same way you'd review a pull request.
 
-Claude only changes your spec in those three ways on its own: ticking the step, `+` → `@`, and `// decided:` lines. Anything else it proposes and waits for your OK.
+Claude only changes your spec in those four ways on its own: ticking the step, `+` → `@`, `// decided:` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
+
+### The snapshot
+
+Like EF Core migrations: each step is a small change, and `## [x] Current state` is the snapshot of everything built so far. `llmd snapshot [spec]` merges every done step into it, removes the step from the spec and appends it to `.llmd/archive/<spec>.llmd`. So the spec stays short: the current architecture, then the open steps.
+
+The merge is plain text, with no AI involved:
+
+- A file is matched by its path, a type, method or field by its name, anything else by its exact text.
+- New lines are added. A method the step lists again gets the step's signature and its new logic lines; its old lines stay.
+- A `~` line removes its match: `- ~Stop()`, `~@Old.cs` or `- ~print the result`. To rename, remove the old name and add the new one.
+- `// decided:` lines are kept. The step's other notes are only in the archive.
+
+Without a spec name it uses the only spec in `.llmd/`. To start an older spec that has many done steps, run it once by hand.
 
 ### Commit
 
@@ -175,11 +201,11 @@ In a git repo, Claude offers to commit each finished step, with the step's title
 ### Change your mind
 
 - **Something in a done step is wrong:** add a new step that fixes it, e.g. `## Fix division by zero`. That keeps the history honest.
-- **To redo a step entirely:** edit it, remove its `[x]`, and ask Claude to implement it again.
+- **To redo a step entirely:** once it's folded, the step is gone from the spec. Write a new step that changes the code, with `~` lines for what goes. The original is in `.llmd/archive/`.
 
 ### Start from existing code
 
-`describe @src as llmd` writes a spec of code that already exists to `.llmd/`, as one `## [x] Existing code` step. Add your next steps below it.
+`describe @src as llmd` writes a spec of code that already exists to `.llmd/`, as one `## [x] Current state` step. Add your next steps below it.
 
 ## 5. Work on the extension itself
 
@@ -196,3 +222,5 @@ The extension is described in its own format in [spec.llmd](spec.llmd).
 - Markdown tables, quotes and numbered lists aren't colored in `.llmd` files.
 - Ctrl+click works on `@` files but not on `@` folders.
 - If you press Enter very quickly after typing a method line, the `- ` is sometimes not added.
+- `llmd snapshot` only adds logic lines, so when a step changes how a method behaves, its old line stays in Current state until a step removes it with `~`.
+- Methods with the same name (overloads) merge into one in the snapshot.

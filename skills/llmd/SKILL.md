@@ -21,6 +21,7 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `lang: go` | Stack for the whole file, at the top. Write idiomatic code for it. |
 | `## Title` | A **step**: one piece of work, like an issue. Everything down to the next `##` belongs to it. `## [ ] Title` means the same. |
 | `## [x] Title` | A done step. Context for later steps; don't redo it. |
+| `## [x] Current state` | The **snapshot**: the whole architecture as built, made by folding done steps into it. Read it first. |
 | `### Heading` | A subsection inside a step. Part of that step. |
 | `@path/to/file.go` | A unit: an **existing** file. Children describe what it has or should get. |
 | `+path/to/file.go` | A unit: a **new** file to create. A unit can also be a folder or package, e.g. `+cmd/internal/models`. |
@@ -32,6 +33,7 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `Name.Method` inside a logic line | A call to another unit's method. |
 | `@path` inside any line | A reference: read that file or folder for context. |
 | `? question` | An open question. It blocks the step it sits in. |
+| `- ~Name()`, `~@old.go`, `- ~line` | A removal: once the step is folded, the matching method, unit or logic line leaves the snapshot. A rename is a `~` of the old name plus the new one. Build it by deleting that code. |
 | `// note` | A note from the user. Context only, never a task. |
 
 Anything above the first `##` step (the title, `lang:`, notes) is context for every step. The same file can appear in several steps: each step says what that step changes in it.
@@ -78,16 +80,17 @@ lang: go
 6. **Match the signatures exactly** as written: names, arguments and return types.
 7. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
 8. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
-9. **Offer a commit.** In a git repo, once the step is ticked, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
-10. **Never change the spec silently.** Besides ticking the step, `+` → `@` and `// decided:`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
-11. **Report back** with what you built, whether you ticked the step, and any questions that are still open.
+9. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
+10. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
+11. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:` and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+12. **Report back** with what you built, whether you ticked the step, and any questions that are still open.
 
 ## Writing a spec from existing code
 
 When asked to describe code "as llmd":
 
 - Write it to `.llmd/<name>.llmd` unless the user names another place.
-- Put it all in one `## [x] Existing code` step, so new work can follow as plain `##` steps.
+- Put it all in one `## [x] Current state` step, so new work can follow as plain `##` steps.
 - Write one `@path` unit per file, in the order a reader would follow the flow (entry point first).
 - List types with `:`, plus fields and methods with their real signatures.
 - Give each method one to three short logic lines that say what it does, not how. Use `Name.Method` for calls into other units.

@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
+import { fold } from './snapshot';
 import { builtinTypes, findCalls, indexSymbols, inPath, inTypePosition, typeSpans } from './symbols';
 
 const text = [
@@ -135,5 +136,68 @@ assert.ok(builtinTypes(models).includes('float64') && !builtinTypes(models).incl
 assert.ok(builtinTypes('lang: rust').includes('i32') && builtinTypes('no lang').includes('i32'));
 assert.ok(inTypePosition('    - id: in', 12) && inTypePosition('- Save(b bo', 11));
 assert.ok(!inTypePosition('    - id: in', 7) && !inTypePosition('  - : bo', 8) && !inTypePosition('- read the input', 10));
+
+const history = fold([
+  '# Calc',
+  'lang: go',
+  '',
+  '## [x] Current state',
+  '',
+  '@main.go',
+  '  - run()',
+  '    - read input',
+  '    - print result',
+  '  - old()',
+  '',
+  '## [x] Add history',
+  '// why we wanted it: dropped',
+  '+history.go',
+  '  : History',
+  '    - items: []string',
+  '@main.go',
+  '  - [x] run() -> error',
+  '    - read input',
+  '    - save to History',
+  '    - ~print result',
+  '  - ~old()',
+  '  // decided: keep 10 items',
+  '### Notes',
+  '// decided: no persistence',
+  '',
+  '## Open step',
+  '@main.go',
+  '  - more()',
+  '',
+].join('\n'));
+assert.strictEqual(history.text, [
+  '# Calc',
+  'lang: go',
+  '',
+  '## [x] Current state',
+  '',
+  '@main.go',
+  '  - run() -> error',
+  '    - read input',
+  '    - save to History',
+  '  // decided: keep 10 items',
+  '',
+  '@history.go',
+  '  : History',
+  '    - items: []string',
+  '',
+  '// decided: no persistence',
+  '',
+  '## Open step',
+  '@main.go',
+  '  - more()',
+  '',
+].join('\n'));
+assert.strictEqual(history.folded.length, 1);
+assert.ok(history.folded[0].startsWith('## [x] Add history') && history.folded[0].includes('dropped'));
+
+const fresh = fold('# T\r\n\r\n## [x] One\r\n+a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n');
+assert.strictEqual(fresh.text, '# T\r\n\r\n## [x] Current state\r\n\r\n@a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n',
+  'Current state is created above the first step; fences and CRLF survive');
+assert.deepStrictEqual(fold('# T\n## Open\n').folded, [], 'nothing done, nothing folded');
 
 console.log('ok');

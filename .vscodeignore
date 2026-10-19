@@ -5,6 +5,7 @@ tsconfig.json
 out/test.js
 out/e2e.js
 out/runE2E.js
+out/cli.js
 .vscode-test/**
 *.vsix
 skills/**

@@ -1,0 +1,293 @@
+## [x] Version 1: references, highlighting, outline and symbols
+
+@src/refs.ts
+  - [x] findRefs(text: string) -> Ref[]
+    - skip lines inside fenced code blocks
+    - match @path not preceded by a word char, trim a trailing sentence dot
+
+@src/outline.ts
+  : OutlineNode
+    - kind: 'heading' | 'unit' | 'type' | 'method' | 'field'
+    - name: string
+    - detail: string
+    - line: number
+    - endLine: number
+    - children: OutlineNode[]
+  - [x] parseOutline(text: string) -> OutlineNode[]
+    - skip lines inside fenced code blocks
+    - headings nest by level; units go under the nearest heading
+    - types go under their unit; methods and fields under their type, or the unit when there is no type
+    - lines indented under a method are logic, not symbols
+    - endLine is the last line that belongs to the node, so the breadcrumbs follow the cursor
+
+@src/symbols.ts
+  : Declared
+    - kind: 'type' | 'unit'
+    - line: number
+    - members: Map<string, number>
+  : Call
+    - name: string
+    - member: string
+    - line: number
+    - start: number
+    - end: number
+  - [x] indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
+    - every type by its name, every unit by its file name without extension, so src/refs.ts is "refs"
+    - members are the methods, fields and types directly under it, mapped to their line
+    - units with the same path share their members
+  - [x] findCalls(text: string) -> Call[]
+    - every Name.member outside fenced code blocks and outside @ and + paths
+    - start and end are the columns of the whole Name.member
+
+@src/extension.ts
+  - [x] activate(context: vscode.ExtensionContext)
+    - warn on @refs that don't exist, using refs.findRefs
+    - make @refs to files Ctrl+clickable
+    - complete files and folders after @ and /, one folder level at a time
+    - dim [x] methods and their logic lines, using doneLines
+    - on Enter on an empty "- " line, remove it and outdent; otherwise a normal Enter
+    - show outline.parseOutline as document symbols, using toSymbols
+    - register findDefinition, completeNames and callProblems next to the other providers and warnings
+  - [x] doneLines(text: string) -> number[]
+    - lines of [x] methods plus the deeper-indented lines under them
+  - [x] toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument) -> vscode.DocumentSymbol[]
+    - heading, unit, type, method, field become String, File, Class, Method and Field symbols
+    - method detail is its signature, like "(dir string) -> error"; a + unit's detail is "new file"
+  - [x] findDefinition(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.Location | undefined
+    - on the member part of Name.member, go to the member; on a declared name, go to its declaration
+  - [x] completeNames(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.CompletionItem[]
+    - after "Name." offer that name's members
+    - otherwise offer every declared name: types as classes, units as files
+    - nothing inside @ and + paths
+  - [x] callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
+    - warn on Name.member when Name is a declared type without that member
+    // unit names aren't checked: prose like "extension.ts" would look like a call
+
+@language-configuration.json
+  - on Enter after a unit, type or method line, indent one level and start the line with "- "
+
+@syntaxes/llmd.tmLanguage.json
+  - color @path and +path unit lines like file names
+  - color ": Name" lines like type names
+  - color "? ..." lines like warnings and "// ..." lines like comments
+  - markdown headings, code blocks and inline markdown for everything else
+  // decided: LLMD lines win over markdown; tables, quotes and numbered lists lose markdown colors
+
+@src/test.ts
+  - check findRefs, parseOutline, indexSymbols and findCalls on small specs
+
+@src/e2e.ts
+  - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
+  - go to definition, "Name." completion and a typo warning
+
+@HOWTO.md
+  - how to install the extension and the skill
+  - how to write a spec, with every line type and an example
+  - how to work with Claude from a spec: implement, answer ? questions, review [x] ticks
+
+## [x] Steps as issues
+
+// Each ## heading is a step, like an issue. Claude implements one step at a time and ticks the step, not the methods.
+
+@skills/llmd/SKILL.md
+  - "## [ ] Title" is a step and "## [x] Title" is a done step
+  - "implement the next step" means the first unticked step from the top; touch only what it lists
+  - a ? blocks only the step it sits in; text above the first step is context for every step
+  - tick the step once all of it is built and builds; don't add [x] to methods
+  - in a git repo, offer to commit a finished step with its title as the message
+  - when describing existing code as llmd, put it all in one "## [x] Existing code" step
+
+@src/outline.ts
+  - parseOutline(text: string) -> OutlineNode[]
+    - a heading's [ ] or [x] box is not part of its name; a done step's detail is "done"
+
+@src/extension.ts
+  - doneLines(text: string) -> number[]
+    - also every line of a done step, down to the next heading of the same or a higher level
+    - headings inside fenced code blocks don't count
+
+@src/test.ts
+  - check step names and the "done" detail in the outline
+
+@src/e2e.ts
+  - check that a done step and its subsections are dimmed, and an open step isn't
+
+@HOWTO.md
+  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
+
+## [x] Specs in .llmd/, steps without a box
+
+// A spec lives in .llmd/ at the project root, so it can be gitignored. A bare "## Title" is an open step.
+
+@src/refs.ts
+  - projectOf(file: string) -> string | undefined
+    - the folder that holds the nearest .llmd/ folder above the file, or undefined
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - resolve @paths from refs.projectOf when the spec is in .llmd/, else from the workspace folder as before
+
+@src/test.ts
+  - check projectOf with / and \ paths, nested folders, and a spec outside .llmd/
+
+@skills/llmd/SKILL.md
+  - look for specs in .llmd/ when the user names none; ask if there are several; write new specs there
+  - "## Title" is an open step, same as "## [ ] Title"; ticking makes it "## [x] Title"
+
+@README.md
+  - specs go in .llmd/, with a tip on gitignoring it per repo or globally
+  - steps without [ ], and prompts that don't need the spec's path
+
+## [x] Implement button
+
+// One click from a step to a running agent, for any agent CLI.
+
+@src/outline.ts
+  - openSteps(text: string) -> { title: string; line: number }[]
+    - every "##" heading from parseOutline that isn't done, with its title and line
+
+@src/agent.ts
+  - agentCommand(command: string, step: string, file: string, shell: string) -> string
+    - the command, then the prompt 'implement the step "<step>" in <file>' as one argument
+    - quote the prompt for pwsh, cmd or a POSIX shell, judged from the shell's path
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - show a "▶ Implement" code lens on every openSteps step
+    - on click, save the spec and run agent.agentCommand in a new terminal at the project root
+    - the command comes from the llmd.agentCommand setting, "claude" by default
+
+@package.json
+  - the llmd.agentCommand setting and the hidden llmd.implement command
+
+@src/test.ts
+  - check openSteps, and agentCommand quoting for zsh, pwsh and cmd
+
+@src/e2e.ts
+  - check that Implement shows on open ## steps only
+
+@README.md
+  - explain the Implement button and how to switch it to Codex
+
+## [x] File icon
+
+@images/file.svg
+  - a checklist glyph, one ticked box and one open, in purple
+
+@package.json
+  - use images/file.svg as the llmd language icon, for light and dark themes
+
+## [x] Enter keeps the list going
+
+@language-configuration.json
+  - on Enter after any other "- " line, start a "- " at the same indent
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - on Enter on an empty "- " line, outdent one level and keep the "- "; at the outermost level, remove the bullet
+
+@src/e2e.ts
+  - check Enter after a logic line, then stepping out twice from an empty bullet
+
+@README.md
+  - describe the new Enter behaviour
+
+## [x] Types and project-wide @ search
+
+// "- : Book" declares a type like ": Book". Types after ":" are completed and colored. @ finds any file in the project.
+
+@src/outline.ts
+  - parseOutline(text: string) -> OutlineNode[]
+    - a "- : Name" line is a type, like ": Name"
+
+@syntaxes/llmd.tmLanguage.json
+  - color "- : Name" like ": Name"
+
+@language-configuration.json
+  - on Enter after a "- : Name" line, indent one level and start the line with "- "
+
+@src/symbols.ts
+  - indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
+    - a type wins over a unit with the same name, so type book in book.go is a type
+  - builtinTypes(text: string) -> string[]
+    - the everyday built-in types for the spec's "lang:" line, or every language's when it has none
+  - inTypePosition(line: string, col: number) -> boolean
+    - after "- name:" in a field, or after the name in "- name(...)"
+  - typeSpans(text: string, nodes: OutlineNode[]) -> { line: number; start: number; end: number }[]
+    - built-in and declared type names in field types and method signatures; skip qualified names like time.Time
+
+@src/extension.ts
+  - completeNames(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.CompletionItem[]
+    - in a type position, offer declared types first, then symbols.builtinTypes; ":" also triggers it
+  - activate(context: vscode.ExtensionContext)
+    - color symbols.typeSpans as semantic "type" tokens, with semantic highlighting on for llmd
+    - right after @ or a line-start +, offer every file and folder in the project, skipping .git, node_modules and build output
+    - after a "/", keep walking one folder level at a time
+
+@src/test.ts
+  - check "- : Name" in the outline, typeSpans, builtinTypes and inTypePosition
+
+@src/e2e.ts
+  - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
+
+@README.md
+  - "- : Name", folder units, @ search and type help
+
+@skills/llmd/SKILL.md
+  - "- : Name" and folder units in the syntax table
+
+## [x] Overview of the other specs
+
+@skills/llmd/SKILL.md
+  - before a step, skim the ## step titles and ticks of the other specs in .llmd/
+  - open another spec in full only when a search for this step's paths finds it; raise conflicting open steps as questions
+
+@README.md
+  - say the agent skims the other specs, and asks about conflicting open steps
+
+## [x] Snapshot
+
+// Like EF Core migrations: each step is a small delta, "## [x] Current state" is the snapshot of the whole architecture.
+// Folding is a plain tree merge, no LLM, so the snapshot is exactly the sum of its steps.
+
+@src/outline.ts
+  - export the UNIT, TYPE, METHOD and FIELD patterns, so the fold keys lines the same way the outline does
+
+@src/snapshot.ts
+  : Line
+    - text: string
+    - children: Line[]
+  - fold(text: string) -> { text: string; folded: string[] }
+    - merge every done ## step, top to bottom, into "## [x] Current state", then remove the step
+    - create Current state above the first step when there's none
+    - ### headings inside a step are flattened; its top-level // notes and prose are dropped, except // decided: lines
+    - folded is the removed steps' text, for the archive
+  - merge(into: Line[], from: Line[])
+    - match lines by key: a unit by path, a type, method or field by name, anything else by its text
+    - a new line is appended with its children; + units become @
+    - a matching symbol takes the step's signature, then its children merge the same way
+    - a "~" line removes its match: "- ~Stop()", "~@old.go", "- ~walk dir"
+    // a rename is a ~ of the old name plus the new one
+  - key(line: string) -> string
+  // decided: folded steps are appended to .llmd/archive/<spec>.llmd
+  // decided: a step's logic lines are appended, duplicates skipped; old ones stay until a ~ removes them
+
+@src/cli.ts
+  - main(args: string[])
+    - "llmd snapshot [spec]" folds the spec in place, appends the folded steps to .llmd/archive/<spec>.llmd and prints their titles
+    - without a spec, use the only .llmd file in .llmd/, else say which ones there are
+
+@package.json
+  - a "bin" entry for llmd, so "npm link" puts it on the PATH
+
+@src/test.ts
+  - check fold: new unit, merged method, + to @, ~ removals, decided lines, open steps untouched
+
+@skills/llmd/SKILL.md
+  - after ticking a step, run "llmd snapshot <spec>"; if llmd isn't installed, say so and leave the step ticked
+  - "~" lines in a step mean remove; describing existing code writes "## [x] Current state"
+  // decided: fold right after each tick
+
+@README.md
+  - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
+  - the suggested CLAUDE.md line points at Current state as the architecture
