@@ -12,3 +12,5 @@ skills/**
 .llmd/**
 example.llmd
 .claude-plugin/**
+*.tgz
+.github/**

@@ -20,6 +20,7 @@ jobs:
       - run: npm ci
       # Fixed asset name, so the README's releases/latest/download/llmd.tgz link never changes.
       - run: mv "$(npm pack | tail -1)" llmd.tgz
-      - run: gh release create "$GITHUB_REF_NAME" llmd.tgz --title "$GITHUB_REF_NAME" --generate-notes
+      - run: npx @vscode/vsce package --no-rewrite-relative-links
+      - run: gh release create "$GITHUB_REF_NAME" llmd.tgz llmd-*.vsix --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
