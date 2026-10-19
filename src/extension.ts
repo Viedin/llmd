@@ -128,13 +128,15 @@ export function doneLines(text: string): number[] {
   return lines;
 }
 
-// Enter on an empty "- " drops the bullet and steps out one level; any other Enter is a normal one.
+// Enter on an empty "- " steps out one level and keeps the bullet, so a method's logic ends in its next sibling;
+// at the outermost level it drops the bullet. Any other Enter is a normal one.
 async function enter(editor: vscode.TextEditor) {
   const pos = editor.selection.active;
   const line = editor.document.lineAt(pos.line);
   const empty = line.text.match(/^( *)-\s*$/); // shortcut: assumes space indentation, which the language defaults to
   if (editor.selection.isEmpty && empty && pos.character === line.text.length) {
-    await editor.edit((e) => e.replace(line.range, empty[1].slice(2)));
+    const outer = empty[1].slice(2);
+    await editor.edit((e) => e.replace(line.range, outer && outer + '- '));
     return;
   }
   await vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });

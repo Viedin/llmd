@@ -11,6 +11,10 @@
     {
       "beforeText": "^\\s*-\\s+(\\[[ xX]\\]\\s+)?[A-Za-z_]\\w*\\(.*\\).*$",
       "action": { "indent": "indent", "appendText": "- " }
+    },
+    {
+      "beforeText": "^\\s*-\\s+\\S.*$",
+      "action": { "indent": "none", "appendText": "- " }
     }
   ]
 }

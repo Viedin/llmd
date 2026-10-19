@@ -181,3 +181,18 @@ lang: typescript
 
 @package.json
   - use images/file.svg as the llmd language icon, for light and dark themes
+
+## [x] Enter keeps the list going
+
+@language-configuration.json
+  - on Enter after any other "- " line, start a "- " at the same indent
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - on Enter on an empty "- " line, outdent one level and keep the "- "; at the outermost level, remove the bullet
+
+@src/e2e.ts
+  - check Enter after a logic line, then stepping out twice from an empty bullet
+
+@README.md
+  - describe the new Enter behaviour

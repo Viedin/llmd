@@ -108,9 +108,16 @@ async function checkEnter() {
   await pressEnter();
   assert.strictEqual(doc.lineAt(2).text, '    - ', 'Enter after a method line: ' + JSON.stringify(doc.getText()));
 
+  await editor.edit((e) => e.insert(doc.lineAt(2).range.end, 'read the input'));
   await pressEnter();
-  assert.strictEqual(doc.lineAt(2).text, '  ', 'Enter on an empty bullet removes it and outdents');
-  assert.strictEqual(doc.lineCount, 3);
+  assert.strictEqual(doc.lineAt(3).text, '    - ', 'Enter after a logic line continues the list');
+
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(3).text, '  - ', 'Enter on an empty bullet steps out and keeps the bullet');
+  assert.strictEqual(doc.lineCount, 4);
+
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(3).text, '', 'at the outermost level it drops the bullet');
 }
 
 async function checkSymbols() {

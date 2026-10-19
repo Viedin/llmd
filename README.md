@@ -118,7 +118,8 @@ Reading it top-down: the basic calculator is done and greyed out, with its decis
 
 - **`@`** lists the files and folders in your project. Type `/` to go into a folder. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
-- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. Enter on an empty `- ` removes it and steps back out one level.
+- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` line, Enter starts a new `- ` at the same level.
+- **Enter on an empty `- `** steps back out one level and keeps the `- `, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
 - **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
