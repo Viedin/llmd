@@ -240,3 +240,12 @@ lang: typescript
 
 @skills/llmd/SKILL.md
   - "- : Name" and folder units in the syntax table
+
+## [x] Overview of the other specs
+
+@skills/llmd/SKILL.md
+  - before a step, skim the ## step titles and ticks of the other specs in .llmd/
+  - open another spec in full only when a search for this step's paths finds it; raise conflicting open steps as questions
+
+@README.md
+  - say the agent skims the other specs, and asks about conflicting open steps

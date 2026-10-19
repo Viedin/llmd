@@ -148,12 +148,13 @@ Or ask yourself in Claude Code or Codex, in the project folder:
 
 ### Answer the questions
 
-Before writing any code, Claude asks all of these at once:
+Before writing any code, the agent reads the whole spec, the files the step lists, and the step titles of the other specs in `.llmd/`, so it knows what else is planned or done. Then it asks all of these at once:
 
 - every `?` in the step,
 - anything it would otherwise have to guess,
 - any file it would need to change that the step doesn't list,
-- anything in the spec that contradicts the code it finds.
+- anything in the spec that contradicts the code it finds,
+- another spec's open step that plans different changes to the same file.
 
 Your answers go into the step as `// decided: ...` lines, so each step keeps its own decisions.
 

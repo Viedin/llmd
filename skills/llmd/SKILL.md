@@ -70,6 +70,7 @@ lang: go
 "Implement the next step" means the first step from the top without `[x]`. The user can also name a step ("implement Debounce changes"), or a unit or method inside one; then do only that.
 
 1. **Read first.** Read the whole `.llmd` file (done steps are context), every `@` unit file in the step, and every `@` reference before you write anything.
+   - **Skim the other specs** in `.llmd/` for an overview of the rest of the project: only their `##` step titles and whether they're ticked, e.g. `grep -n '^## ' .llmd/*.llmd`. Open another spec in full only when it mentions a file this step touches; find those with a search for the step's paths, e.g. `grep -l 'internal/models/book.go' .llmd/*.llmd`. If one of its open steps plans different changes to the same file, raise it with your questions.
 2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess. Once the user answers, replace each `?` line with `// decided: <answer>` in the same place, so the step keeps its decisions.
 3. **Go top-down, one unit at a time**, in the order the step lists them.
 4. **Stay inside the step.** Only create its `+` files and only change its `@` unit files. If the work needs any other file changed, ask first.
