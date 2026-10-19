@@ -173,3 +173,11 @@ lang: typescript
 
 @README.md
   - explain the Implement button and how to switch it to Codex
+
+## [x] File icon
+
+@images/file.svg
+  - a checklist glyph, one ticked box and one open, in purple
+
+@package.json
+  - use images/file.svg as the llmd language icon, for light and dark themes
