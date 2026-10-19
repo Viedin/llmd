@@ -40,7 +40,8 @@ export function parseOutline(text: string): OutlineNode[] {
       while (headings.length && headings[headings.length - 1].level >= level) headings.pop();
       open = [];
       extend();
-      const n = node('heading', h[2], '', i);
+      const box = h[2].match(/^\[([ xX])\]\s*/); // step checkbox: "## [x] Title"
+      const n = node('heading', box ? h[2].slice(box[0].length) : h[2], box && box[1] !== ' ' ? 'done' : '', i);
       add(n, headings[headings.length - 1]?.node);
       headings.push({ level, node: n });
       return;

@@ -93,13 +93,28 @@ export function callProblems(doc: vscode.TextDocument): vscode.Diagnostic[] {
   });
 }
 
-// Lines of [x] methods plus the deeper-indented lines under them.
+// Every line of a done step (## [x] down to the next heading of the same or a higher level),
+// plus [x] methods and the deeper-indented lines under them.
 export function doneLines(text: string): number[] {
   const lines: number[] = [];
   let doneIndent = -1;
+  let doneStep = 0; // heading level of the done step we're in, 0 when none
+  let inFence = false;
   text.split('\n').forEach((line, i) => {
+    const fence = /^\s*(```|~~~)/.test(line);
+    if (fence) inFence = !inFence;
+    const heading = !inFence && !fence && line.match(/^(#{1,6})\s+(\[[xX]\])?/);
+    if (heading) {
+      if (doneStep && heading[1].length <= doneStep) doneStep = 0;
+      if (!doneStep && heading[2]) doneStep = heading[1].length;
+      doneIndent = -1;
+    }
+    if (doneStep) {
+      lines.push(i);
+      return;
+    }
     const indent = line.search(/\S/);
-    if (indent === -1) return;
+    if (indent === -1 || heading) return;
     if (doneIndent >= 0 && indent > doneIndent) {
       lines.push(i);
       return;

@@ -70,6 +70,20 @@ async function checkHighlighting() {
   assert.ok(!tokens.some((t) => t.t.includes('markup.raw')), 'deep lines must not become markdown code blocks');
 
   assert.deepStrictEqual(doneLines(text), [3, 4, 5]);
+  const steps = [
+    '# Calc', //                 0
+    '## [x] Basic', //           1
+    '@Program.cs', //            2
+    '  - promptUser()', //       3
+    '```', //                    4
+    '# not a heading', //        5
+    '```', //                    6
+    '### Notes', //              7
+    '// part of the done step', // 8
+    '## [ ] More input', //      9
+    '@Program.cs', //            10
+  ].join('\n');
+  assert.deepStrictEqual(doneLines(steps), [1, 2, 3, 4, 5, 6, 7, 8], 'a done step and its subsections are dimmed');
 
   const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', doc.uri);
   const names = (s: vscode.DocumentSymbol[]): unknown[] => s.map((x) => [x.name, ...names(x.children)]);

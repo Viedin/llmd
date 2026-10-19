@@ -53,6 +53,12 @@ assert.deepStrictEqual(shape(parseOutline(spec)), [
   ['heading Other  17-17'],
 ]);
 
+assert.deepStrictEqual(shape(parseOutline('## [x] Basic calculator\n## [ ] More input\n## Notes')), [
+  ['heading Basic calculator done 0-0'],
+  ['heading More input  1-1'],
+  ['heading Notes  2-2'],
+]);
+
 const index = indexSymbols(parseOutline(spec));
 assert.deepStrictEqual([...index].map(([k, d]) => [k, d.kind, d.line, [...d.members]]), [
   ['watcher', 'unit', 3, [['Start', 4], ['Stop', 7]]],

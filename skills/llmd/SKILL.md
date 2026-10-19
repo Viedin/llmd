@@ -1,11 +1,11 @@
 ---
 name: llmd
-description: Read, write and implement .llmd files, a markdown-based spec format where the user describes files, types, methods and logic top-down and Claude implements it. Use whenever a .llmd file is mentioned, opened or referenced with @, when asked to implement or update a spec, or when asked to describe existing code "as llmd".
+description: Read, write and implement .llmd files, a markdown-based spec format where the user describes work as steps (## headings) of files, types, methods and logic, top-down, and Claude implements one step at a time. Use whenever a .llmd file is mentioned, opened or referenced with @, when asked to implement a spec or "the next step", or when asked to describe existing code "as llmd".
 ---
 
 # LLMD
 
-An `.llmd` file is a spec the user writes so they can steer the architecture without writing the code. It reads top-down, the way code flows. Your job is to turn it into code exactly as described, and to ask when it doesn't say enough.
+An `.llmd` file is a spec the user writes so they can steer the architecture without writing the code. It reads top-down, the way code flows. The work is split into **steps**, like issues: each `##` heading is one. Your job is to turn a step into code exactly as described, and to ask when it doesn't say enough.
 
 ## Syntax
 
@@ -13,19 +13,24 @@ Indent with 2 spaces. Each level belongs to the line above it.
 
 | Line | Meaning |
 |---|---|
-| `# Heading` | Markdown heading. Groups the units below it. Any markdown prose is context. |
+| `# Title` | The spec's title. |
 | `lang: go` | Stack for the whole file, at the top. Write idiomatic code for it. |
+| `## [ ] Title` | A **step**: one piece of work, like an issue. Everything down to the next `##` belongs to it. |
+| `## [x] Title` | A done step. Context for later steps; don't redo it. |
+| `### Heading` | A subsection inside a step. Part of that step. |
 | `@path/to/file.go` | A unit: an **existing** file. Children describe what it has or should get. |
 | `+path/to/file.go` | A unit: a **new** file to create. |
 | `: Name` | A type, class or struct inside the file above. Optional when the file has only one. |
 | `- name: Type` | A field (no parentheses). |
 | `- Name(args) -> Return` | A method or function (has parentheses). `-> Return` is optional. |
-| `- [x] Name(...)` | A method that is implemented. `- [ ] Name(...)` or no box means not done. |
-| `- some step` under a method | Logic, in order. Intent, not literal code. |
+| `- [x] Name(...)` | The user marked this method done. Treat it as built. You never add these yourself. |
+| `- some line` under a method | Logic, in order. Intent, not literal code. |
 | `Name.Method` inside a logic line | A call to another unit's method. |
 | `@path` inside any line | A reference: read that file or folder for context. |
-| `? question` | An open question. It blocks the unit it sits in (or the whole file at top level). |
+| `? question` | An open question. It blocks the step it sits in. |
 | `// note` | A note from the user. Context only, never a task. |
+
+Anything above the first `##` step (the title, `lang:`, notes) is context for every step. The same file can appear in several steps: each step says what that step changes in it.
 
 Example:
 
@@ -33,13 +38,14 @@ Example:
 # Vaultwave sync
 lang: go
 
+## [x] Watch folders
 @internal/watcher/watcher.go
-  - [x] Start(dir string) -> error
+  - Start(dir string) -> error
     - walk dir and watch every folder
-    - on change call Debouncer.Push(path)
   - Stop()
     - close the fsnotify watcher
 
+## [ ] Debounce changes
 +internal/sync/debounce.go
   : Debouncer
     - wait: time.Duration
@@ -48,27 +54,36 @@ lang: go
       - then call Uploader.Send(paths)
   ? should Push drop duplicate paths
 
-// conflict handling is out of scope for v1, see @docs/conflicts.md
+@internal/watcher/watcher.go
+  - Start(dir string) -> error
+    - on change call Debouncer.Push(path)
+
+// conflict handling is out of scope for now, see @docs/conflicts.md
 ```
 
-## Implementing a spec
+## Implementing a step
 
-1. **Read first.** Read the whole `.llmd` file, every `@` unit file, and every `@` reference before you write anything.
-2. **Ask every blocking `?` at once**, before writing code, for the part you've been asked to implement. Once the user answers, replace the line with `// decided: <answer>` so the spec stays the source of truth.
-3. **Go top-down, one unit at a time**, in file order. If the user names a unit or method ("implement the Debouncer"), do only that.
-4. **Stay inside the spec.** Only create `+` files and only change `@` unit files. If the work needs any other file changed, ask first.
-5. **Follow the logic steps in order.** They describe intent: fill in the obvious details (error handling, imports, the project's existing style and helpers) but don't add behaviour the spec doesn't ask for. If a step is ambiguous, ask instead of guessing.
+"Implement the next step" means the first `## [ ]` step from the top. The user can also name a step ("implement Debounce changes"), or a unit or method inside one; then do only that.
+
+1. **Read first.** Read the whole `.llmd` file (done steps are context), every `@` unit file in the step, and every `@` reference before you write anything.
+2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess. Once the user answers, replace each `?` line with `// decided: <answer>` in the same place, so the step keeps its decisions.
+3. **Go top-down, one unit at a time**, in the order the step lists them.
+4. **Stay inside the step.** Only create its `+` files and only change its `@` unit files. If the work needs any other file changed, ask first.
+5. **Follow the logic lines in order.** They describe intent: fill in the obvious details (error handling, imports, the project's existing style and helpers) but don't add behaviour the step doesn't ask for. If a line is ambiguous, ask instead of guessing.
 6. **Match the signatures exactly** as written: names, arguments and return types.
-7. **Tick `[x]`** on a method only once it is implemented and builds (and its tests pass, if there are any). Once you've created a `+` file, change its unit line to `@`, because the file exists now.
-8. **Never change the spec silently.** Besides `[x]` and `// decided:`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
-9. **Report back** with what you implemented, what you ticked, and any questions that are still open.
+7. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
+8. **Tick the step** (`## [ ]` → `## [x]`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
+9. **Offer a commit.** In a git repo, once the step is ticked, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
+10. **Never change the spec silently.** Besides ticking the step, `+` → `@` and `// decided:`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+11. **Report back** with what you built, whether you ticked the step, and any questions that are still open.
 
 ## Writing a spec from existing code
 
 When asked to describe code "as llmd":
 
+- Put it all in one `## [x] Existing code` step, so new work can follow as `## [ ]` steps.
 - Write one `@path` unit per file, in the order a reader would follow the flow (entry point first).
-- List types with `:`, plus fields and methods with their real signatures. Mark existing methods `[x]`.
-- Give each method one to three short logic steps that say what it does, not how. Use `Name.Method` for calls into other units.
+- List types with `:`, plus fields and methods with their real signatures.
+- Give each method one to three short logic lines that say what it does, not how. Use `Name.Method` for calls into other units.
 - Turn anything unclear or suspicious into a `?` line rather than guessing.
 - Leave out trivial getters, generated code and tests unless asked.

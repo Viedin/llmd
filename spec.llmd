@@ -3,7 +3,7 @@ lang: typescript
 
 // Spec for this extension, written in its own format. Format rules: @skills/llmd/SKILL.md
 
-## Done
+## [x] Version 1: references, highlighting, outline and symbols
 
 @src/refs.ts
   - [x] findRefs(text: string) -> Ref[]
@@ -89,3 +89,33 @@ lang: typescript
   - how to install the extension and the skill
   - how to write a spec, with every line type and an example
   - how to work with Claude from a spec: implement, answer ? questions, review [x] ticks
+
+## [x] Steps as issues
+
+// Each ## heading is a step, like an issue. Claude implements one step at a time and ticks the step, not the methods.
+
+@skills/llmd/SKILL.md
+  - "## [ ] Title" is a step and "## [x] Title" is a done step
+  - "implement the next step" means the first unticked step from the top; touch only what it lists
+  - a ? blocks only the step it sits in; text above the first step is context for every step
+  - tick the step once all of it is built and builds; don't add [x] to methods
+  - in a git repo, offer to commit a finished step with its title as the message
+  - when describing existing code as llmd, put it all in one "## [x] Existing code" step
+
+@src/outline.ts
+  - parseOutline(text: string) -> OutlineNode[]
+    - a heading's [ ] or [x] box is not part of its name; a done step's detail is "done"
+
+@src/extension.ts
+  - doneLines(text: string) -> number[]
+    - also every line of a done step, down to the next heading of the same or a higher level
+    - headings inside fenced code blocks don't count
+
+@src/test.ts
+  - check step names and the "done" detail in the outline
+
+@src/e2e.ts
+  - check that a done step and its subsections are dimmed, and an open step isn't
+
+@HOWTO.md
+  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
