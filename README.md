@@ -13,13 +13,14 @@ You only do this once. After that it works in every project.
 
 ### The extension
 
-Search for **LLMD** in the Extensions view, or:
+Download it from the latest release and install it. Run the same two commands to update:
 
 ```bash
-code --install-extension viedin.llmd
+curl -LO https://github.com/viedin/llmd/releases/latest/download/llmd.vsix
+code --install-extension llmd.vsix
 ```
 
-Cursor, Windsurf and VSCodium get it from Open VSX under the same name. Any file ending in `.llmd` now uses the extension. The status bar's language mode shows **LLMD**.
+Cursor, Windsurf and VSCodium install the same file: use `cursor`, `windsurf` or `codium` in place of `code`. Any file ending in `.llmd` now uses the extension. The status bar's language mode shows **LLMD**.
 
 ### The skill
 
