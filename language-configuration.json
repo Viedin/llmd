@@ -15,6 +15,10 @@
     {
       "beforeText": "^\\s*-\\s+\\S.*$",
       "action": { "indent": "none", "appendText": "- " }
+    },
+    {
+      "beforeText": "^\\s*\\*\\s+\\S.*$",
+      "action": { "indent": "none", "appendText": "* " }
     }
   ]
 }

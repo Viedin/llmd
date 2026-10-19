@@ -91,11 +91,14 @@ lang: typescript
   - callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
     - warn on Name.member when Name is a declared type without that member
     // unit names aren't checked: prose like "extension.ts" would look like a call
+  - enter(editor: vscode.TextEditor)
+    - an empty "* " line steps out like an empty "- ", keeping its "* "
 
 @language-configuration.json
   - on Enter after a unit, type or method line, indent one level and start the line with "- "
   - on Enter after any other "- " line, start a "- " at the same indent
   - on Enter after a "- : Name" line, indent one level and start the line with "- "
+  - on Enter after a "* " line, start a "* " at the same indent
 
 @syntaxes/llmd.tmLanguage.json
   - color @path and +path unit lines like file names
@@ -104,6 +107,7 @@ lang: typescript
   - markdown headings, code blocks and inline markdown for everything else
   // decided: LLMD lines win over markdown; tables, quotes and numbered lists lose markdown colors
   - color "- : Name" like ": Name"
+  - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
 
 @src/test.ts
   - check findRefs, parseOutline, indexSymbols and findCalls on small specs
@@ -120,6 +124,7 @@ lang: typescript
   - check that Implement shows on open ## steps only
   - check Enter after a logic line, then stepping out twice from an empty bullet
   - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
+  - check "* " coloring and Enter after a "* " line
 
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
@@ -136,6 +141,14 @@ lang: typescript
   - after ticking a step, run "llmd snapshot <spec>"; if llmd isn't installed, say so and leave the step ticked
   - "~" lines in a step mean remove; describing existing code writes "## [x] Current state"
   // decided: fold right after each tick
+  - "* line" in the syntax table: a requirement the agent designs itself, under a unit, a type, a method or the step
+  - for "*" lines, decide instead of asking; ask only at a real fork, like two designs with different trade-offs
+  - before ticking, replace each "*" line with the "-" lines it built: units, types, signatures and short logic
+    - the user's wording survives in the archive, so nothing is lost
+  - this replacement is one more spec edit the agent may make on its own
+  - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
+  // decided: a "*" line at step level lets the agent choose the files; the report lists them
+  // decided: build, then report the decisions; no design approval first
 
 @README.md
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
@@ -150,6 +163,8 @@ lang: typescript
   - how to write a spec, with every line type and an example
   - how to work with Claude from a spec: implement, answer ? questions, review, snapshot and commit
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step
+  - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
+  - that the agent replaces "*" lines with what it built before the step is folded
 
 @src/agent.ts
   - agentCommand(command: string, step: string, file: string, shell: string) -> string
@@ -187,6 +202,7 @@ lang: typescript
   - main(args: string[])
     - "llmd snapshot [spec]" folds the spec in place, appends the folded steps to .llmd/archive/<spec>.llmd and prints their titles
     - without a spec, use the only .llmd file in .llmd/, else say which ones there are
+    - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
 
 ## Drift warnings
 
@@ -227,39 +243,3 @@ lang: typescript
 @README.md
   - drift warnings under Editor help, and that they need the language's extension installed
   - in Known limits: only names are checked, not signatures or logic
-
-## Free lines
-
-// "-" lines say how, and the user designs it. "*" lines say what, and the agent designs it. Mix them per line.
-// After building, the agent turns each "*" into the "-" lines it built, so Current state stays structural and checkable.
-
-@skills/llmd/SKILL.md
-  - "* line" in the syntax table: a requirement the agent designs itself, under a unit, a type, a method or the step
-  - for "*" lines, decide instead of asking; ask only at a real fork, like two designs with different trade-offs
-  - before ticking, replace each "*" line with the "-" lines it built: units, types, signatures and short logic
-    - the user's wording survives in the archive, so nothing is lost
-  - this replacement is one more spec edit the agent may make on its own
-  - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
-  ? may a "*" line at step level, with no unit above it, let the agent choose which files to touch
-  ? propose the design and wait for an OK before writing code, or build and report the decisions
-
-@syntaxes/llmd.tmLanguage.json
-  - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
-
-@language-configuration.json
-  - on Enter after a "* " line, start a "* " at the same indent
-
-@src/extension.ts
-  - enter(editor: vscode.TextEditor)
-    - an empty "* " line steps out like an empty "- ", keeping its "* "
-
-@src/cli.ts
-  - main(args: string[])
-    - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
-
-@src/e2e.ts
-  - check "* " coloring and Enter after a "* " line
-
-@README.md
-  - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
-  - that the agent replaces "*" lines with what it built before the step is folded

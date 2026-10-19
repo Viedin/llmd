@@ -30,6 +30,7 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `- Name(args) -> Return` | A method or function (has parentheses). `-> Return` is optional. |
 | `- [x] Name(...)` | The user marked this method done. Treat it as built. You never add these yourself. |
 | `- some line` under a method | Logic, in order. Intent, not literal code. |
+| `* some line` | A **free line**: what should happen, and you design how. Under a unit, type or method, or at step level, where you also choose the files. |
 | `Name.Method` inside a logic line | A call to another unit's method. |
 | `@path` inside any line | A reference: read that file or folder for context. |
 | `? question` | An open question. It blocks the step it sits in. |
@@ -73,17 +74,19 @@ lang: go
 
 1. **Read first.** Read the whole `.llmd` file (done steps are context), every `@` unit file in the step, and every `@` reference before you write anything.
    - **Skim the other specs** in `.llmd/` for an overview of the rest of the project: only their `##` step titles and whether they're ticked, e.g. `grep -n '^## ' .llmd/*.llmd`. Open another spec in full only when it mentions a file this step touches; find those with a search for the step's paths, e.g. `grep -l 'internal/models/book.go' .llmd/*.llmd`. If one of its open steps plans different changes to the same file, raise it with your questions.
-2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess. Once the user answers, replace each `?` line with `// decided: <answer>` in the same place, so the step keeps its decisions.
+2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess in a `-` line. Once the user answers, replace each `?` line with `// decided: <answer>` in the same place, so the step keeps its decisions.
 3. **Go top-down, one unit at a time**, in the order the step lists them.
-4. **Stay inside the step.** Only create its `+` files and only change its `@` unit files. If the work needs any other file changed, ask first.
+4. **Stay inside the step.** Only create its `+` files and only change its `@` unit files. If the work needs any other file changed, ask first. The exception is a `*` line at step level, with no unit above it: there you choose the files.
 5. **Follow the logic lines in order.** They describe intent: fill in the obvious details (error handling, imports, the project's existing style and helpers) but don't add behaviour the step doesn't ask for. If a line is ambiguous, ask instead of guessing.
-6. **Match the signatures exactly** as written: names, arguments and return types.
-7. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
-8. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
-9. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
-10. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
-11. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:` and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
-12. **Report back** with what you built, whether you ticked the step, and any questions that are still open.
+6. **Design the `*` lines yourself.** They say what, not how: choose the methods, names and logic, in the project's existing style. Decide instead of asking; ask only at a real fork, like two designs with different trade-offs. Don't stop for approval: build, then report.
+7. **Match the signatures exactly** as written: names, arguments and return types.
+8. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
+9. **Replace each `*` line with what you built**, as ordinary lines: `@` or `+` units, types, signatures and short logic, in the same place. Do it before ticking, so the snapshot holds structure, not prose. The user's wording stays in the archive.
+10. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
+11. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
+12. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
+13. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+14. **Report back** with what you built, whether you ticked the step, and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
 
 ## Writing a spec from existing code
 

@@ -58,6 +58,7 @@ async function checkHighlighting() {
     '  - Open()',
     '? what now',
     '// a note',
+    '* should be fast, see @docs/y.md',
   ].join('\n');
   const { doc } = await openTemp('fixture.llmd', text);
 
@@ -70,6 +71,8 @@ async function checkHighlighting() {
   assert.match(scopes('?'), /keyword\.control\.question\.llmd/);
   assert.match(scopes('// a note'), /comment\.line/);
   assert.match(scopes('@docs/x.md'), /string\.other\.path\.llmd/);
+  assert.match(scopes('should be fast, see'), /markup\.italic\.free\.llmd/);
+  assert.match(scopes('@docs/y.md'), /string\.other\.path\.llmd/, '@refs still work in a free line');
   assert.ok(!tokens.some((t) => t.t.includes('markup.raw')), 'deep lines must not become markdown code blocks');
 
   assert.deepStrictEqual(doneLines(text), [3, 4, 5]);
@@ -120,6 +123,12 @@ async function checkEnter() {
 
   await pressEnter();
   assert.strictEqual(doc.lineAt(3).text, '', 'at the outermost level it drops the bullet');
+
+  await editor.edit((e) => e.insert(doc.lineAt(3).range.end, '    * should be fast'));
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(4).text, '    * ', 'Enter after a free line continues it');
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(4).text, '  * ', 'an empty free line steps out and keeps the *');
 }
 
 async function checkSymbols() {

@@ -90,6 +90,7 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 | `- total: double` | A field (no parentheses). | Shows in the outline. |
 | `- Add(a, b) -> double` | A method or function (it has parentheses). `-> ...` is the return type and is optional. | Shows in the outline. |
 | `- line` under a method | Logic, in order. Say what should happen, not the exact code. | Nothing special. |
+| `* should also log` | A **free line**: what should happen, and Claude designs how. Works under a file, type or method, or on its own in a step. | Italic. |
 | `HandleUser.ReadUserInput` in a line | A call to another method in the spec. | Ctrl+click jumps to it. A warning if a declared type has no such member. |
 | `@docs/notes.md` in a line | "Read this for context." | Ctrl+click opens it. A warning if it doesn't exist. |
 | `? use doubles or decimals` | An open question. Claude must ask you before building that step. | Highlighted. |
@@ -126,13 +127,33 @@ lang: csharp
 
 Reading it top-down: the basic calculator is done and greyed out, with its decisions kept inside it. The next step creates `HandleUser.cs` and changes `Program.cs` to use it. There's one open question for Claude to ask before it starts.
 
+### Hand decisions to Claude
+
+A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix them line by line, so you pin down the parts you care about and leave the rest:
+
+```
+## Export
+@src/Report.cs
+  * export the report as CSV and JSON
+  * big reports shouldn't freeze the UI
+  - ToCsv(rows) -> string
+    * quote fields the way Excel expects
+
+* log every export somewhere sensible
+```
+
+- Under a file, type or method, Claude chooses the methods, names and logic there.
+- On its own in a step, with no file above it, Claude also chooses which files to touch.
+- Claude decides instead of asking, and only asks when two designs have real trade-offs. Its report lists what it decided.
+- Before ticking the step, Claude replaces each `*` line with the `-` lines it actually built. So `## [x] Current state` stays a map of the code, and your `*` wording is kept in the archive.
+
 ### Editor help while you write
 
 - **`@`** searches every file and folder in your project: `@book` finds `cmd/internal/models/book.go`. Type `/` to go into a folder one level at a time. A `+` at the start of a line does the same, for new files in existing folders. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
 - **Types:** after `- id:`, in a method's parameters and after `->`, completion offers the types declared in the spec first, then the built-in types for its `lang:`. Those names are colored as types, so a misspelled type stays plain.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
-- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` line, Enter starts a new `- ` at the same level.
-- **Enter on an empty `- `** steps back out one level and keeps the `- `, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
+- **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` or `* ` line, Enter starts a new one at the same level.
+- **Enter on an empty `- ` or `* `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
 - **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
@@ -176,10 +197,11 @@ Claude builds the step top-down, one file at a time, and reports back. Check:
 
 - **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
 - **`+` becomes `@`.** Once Claude creates a new file, its line changes from `+` to `@`.
-- **The snapshot.** After ticking, Claude runs `llmd snapshot`, so the step moves into `## [x] Current state`.
+- **`*` becomes `-`.** Each free line is replaced by what Claude built for it. Check the design in its report along with the diff.
+- **The snapshot.** After ticking, Claude runs `llmd snapshot`, so the step moves into `## [x] Current state`. It warns if a step still had `*` lines.
 - **The code itself.** Look at the diff the same way you'd review a pull request.
 
-Claude only changes your spec in those four ways on its own: ticking the step, `+` → `@`, `// decided:` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
+Claude only changes your spec in those five ways on its own: ticking the step, `+` → `@`, `// decided:` lines, replacing `*` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
 
 ### The snapshot
 

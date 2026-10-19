@@ -28,8 +28,12 @@ export function main(args: string[]): number {
   // Archive first: if the spec write fails, the steps are in both places rather than in neither.
   fs.writeFileSync(archive, before + folded.join('\n\n') + '\n');
   fs.writeFileSync(spec, text);
-  console.log(`Folded into Current state: ${folded.map((s) => s.split(/\r?\n/)[0].replace(/^##\s+\[[xX]\]\s*/, '')).join(', ')}`);
+  const title = (step: string) => step.split(/\r?\n/)[0].replace(/^##\s+\[[xX]\]\s*/, '');
+  console.log(`Folded into Current state: ${folded.map(title).join(', ')}`);
   console.log(`Archived in ${path.relative(process.cwd(), archive)}`);
+  // ponytail: also matches a "* " line inside a fenced block; fine for a warning
+  const free = folded.filter((s) => /^\s*\*\s/m.test(s));
+  if (free.length) console.warn(`Warning: ${free.map(title).join(', ')} still had "*" lines, so Current state holds prose there. Replace them with what was built.`);
   return 0;
 }
 

@@ -308,3 +308,39 @@
   - how to write a spec, with every line type and an example
   - how to work with Claude from a spec: implement, answer ? questions, review, snapshot and commit
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step
+
+## [x] Free lines
+
+// "-" lines say how, and the user designs it. "*" lines say what, and the agent designs it. Mix them per line.
+// After building, the agent turns each "*" into the "-" lines it built, so Current state stays structural and checkable.
+
+@skills/llmd/SKILL.md
+  - "* line" in the syntax table: a requirement the agent designs itself, under a unit, a type, a method or the step
+  - for "*" lines, decide instead of asking; ask only at a real fork, like two designs with different trade-offs
+  - before ticking, replace each "*" line with the "-" lines it built: units, types, signatures and short logic
+    - the user's wording survives in the archive, so nothing is lost
+  - this replacement is one more spec edit the agent may make on its own
+  - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
+  // decided: a "*" line at step level lets the agent choose the files; the report lists them
+  // decided: build, then report the decisions; no design approval first
+
+@syntaxes/llmd.tmLanguage.json
+  - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
+
+@language-configuration.json
+  - on Enter after a "* " line, start a "* " at the same indent
+
+@src/extension.ts
+  - enter(editor: vscode.TextEditor)
+    - an empty "* " line steps out like an empty "- ", keeping its "* "
+
+@src/cli.ts
+  - main(args: string[])
+    - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
+
+@src/e2e.ts
+  - check "* " coloring and Enter after a "* " line
+
+@README.md
+  - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
+  - that the agent replaces "*" lines with what it built before the step is folded
