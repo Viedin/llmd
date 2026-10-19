@@ -157,8 +157,8 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
 - **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
-- **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and `Type.member` names that aren't declared.
-- **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
+- **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and likely typos in `Type.member`, with a suggestion: `Debouncer.Pussh` → "Did you mean 'Push'?". A member that isn't close to a declared one, like an inherited `DbContext.Database`, doesn't warn.
+- **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked, and neither is `.llmd/archive/`, which describes the code as it was. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
 
 ### Tips
 
@@ -198,11 +198,12 @@ Claude builds the step top-down, one file at a time, and reports back. Check:
 
 - **The step tick.** The agent ticks `## [x]` only once the whole step is built and the code compiles, and its tests pass if there are any. The step then greys out.
 - **`+` becomes `@`.** Once Claude creates a new file, its line changes from `+` to `@`.
+- **`~` lines.** Before ticking, Claude adds a `~` for every line in Current state that its code changed or removed, so the snapshot stays true.
 - **`*` becomes `-`.** Each free line is replaced by what Claude built for it. Check the design in its report along with the diff.
 - **The snapshot.** After ticking, Claude runs `llmd snapshot`, so the step moves into `## [x] Current state`. It warns if a step still had `*` lines.
 - **The code itself.** Look at the diff the same way you'd review a pull request.
 
-Claude only changes your spec in those five ways on its own: ticking the step, `+` → `@`, `// decided:` lines, replacing `*` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
+Claude only changes your spec in those six ways on its own: ticking the step, `+` → `@`, `// decided:` lines, replacing `*` lines, adding `~` lines and `llmd snapshot`. Anything else it proposes and waits for your OK.
 
 ### The snapshot
 

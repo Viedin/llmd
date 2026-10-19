@@ -144,6 +144,7 @@ async function checkSymbols() {
     '    - Push(path: string)', //                  7
     '- see watcher.Start', //                       8
     '- Debouncer.', //                              9
+    '- inherited Debouncer.Dispose()', //           10
   ].join('\n'));
 
   const definition = async (line: number, word: string) => {
@@ -165,7 +166,7 @@ async function checkSymbols() {
     await sleep(100);
     typos = vscode.languages.getDiagnostics(doc.uri).map((d) => d.message).filter((m) => m.includes('has no member'));
   }
-  assert.deepStrictEqual(typos, ["Debouncer has no member 'Pussh'"]);
+  assert.deepStrictEqual(typos, ["Debouncer has no member 'Pussh'. Did you mean 'Push'?"], 'only the typo warns, not Dispose');
 }
 
 async function checkCodeLens() {

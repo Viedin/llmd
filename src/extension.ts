@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
-import { builtinTypes, Claim, claims, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
+import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
 
 // @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 function rootOf(doc: vscode.TextDocument): vscode.Uri {
@@ -132,8 +132,11 @@ export function callProblems(doc: vscode.TextDocument): vscode.Diagnostic[] {
     const declared = index.get(c.name);
     // shortcut: only types are checked; unit names collide with prose like "extension.ts"
     if (declared?.kind !== 'type' || declared.members.has(c.member)) return [];
+    // Only likely typos: inherited members (DbContext.Database) and file names in prose (BookService.cs) aren't.
+    const meant = closest(c.member, declared.members.keys());
+    if (!meant) return [];
     const range = new vscode.Range(c.line, c.start, c.line, c.end);
-    return [new vscode.Diagnostic(range, `${c.name} has no member '${c.member}'`, vscode.DiagnosticSeverity.Warning)];
+    return [new vscode.Diagnostic(range, `${c.name} has no member '${c.member}'. Did you mean '${meant}'?`, vscode.DiagnosticSeverity.Warning)];
   });
 }
 
@@ -259,7 +262,9 @@ export function activate(context: vscode.ExtensionContext) {
   };
   const checkDrift = async (doc: vscode.TextDocument) => {
     if (doc.languageId !== 'llmd') return;
-    drift.set(doc.uri.toString(), new Set((await driftProblems(doc)).map((d) => d.message)));
+    // The archive describes the code as it was, so it isn't held to the code as it is.
+    const archived = /[\\/]\.llmd[\\/]archive[\\/]/.test(doc.uri.fsPath);
+    if (!archived) drift.set(doc.uri.toString(), new Set((await driftProblems(doc)).map((d) => d.message)));
     await check(doc);
   };
   vscode.workspace.textDocuments.forEach(checkDrift);

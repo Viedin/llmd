@@ -386,3 +386,35 @@
 @README.md
   - drift warnings under Editor help, and that they need the language's extension installed
   - in Known limits: only names are checked, not signatures or logic
+
+## [x] Accurate warnings and snapshot
+
+// The spec must say what really exists. A warning is only worth showing when something is really wrong.
+
+@src/symbols.ts
+  - closest(name: string, candidates: Iterable<string>) -> string | undefined
+    - the candidate a typo most likely meant, ignoring case: at most 1 edit away for names up to 4 letters, 2 for longer ones
+
+@src/extension.ts
+  - callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
+    - ~warn on Name.member when Name is a declared type without that member
+    - warn only when the member is a likely typo of a declared one, and suggest it: "Debouncer has no member 'Pussh'. Did you mean 'Push'?"
+    // inherited members like DbContext.Database and file names like BookService.cs in prose aren't typos
+  - activate(context: vscode.ExtensionContext)
+    - no drift warnings for specs in .llmd/archive/: they describe the code as it was
+
+@skills/llmd/SKILL.md
+  - before ticking, make sure the step, once folded, describes the code as it really is
+    - add "~" lines for anything in Current state the step's code changed or removed
+    - a line with parentheses is read as a method; write a record's or class's data as fields
+  - adding those "~" lines is one more spec edit the agent may make on its own
+
+@src/test.ts
+  - check closest: a typo, a case slip, nothing close, short names
+
+@src/e2e.ts
+  - the typo warning suggests the declared member; an undeclared member that isn't a typo doesn't warn
+
+@README.md
+  - typo warnings only fire for likely typos, and say what was meant
+  - the archive isn't drift-checked

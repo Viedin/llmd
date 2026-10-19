@@ -82,11 +82,12 @@ lang: go
 7. **Match the signatures exactly** as written: names, arguments and return types.
 8. **Once you've created a `+` file, change its unit line to `@`**, because the file exists now. Do this everywhere the file appears in the spec.
 9. **Replace each `*` line with what you built**, as ordinary lines: `@` or `+` units, types, signatures and short logic, in the same place. Do it before ticking, so the snapshot holds structure, not prose. The user's wording stays in the archive.
-10. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
-11. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
-12. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
-13. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
-14. **Report back** with what you built, whether you ticked the step, and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
+10. **Make the step true before ticking.** Once folded, the spec must describe the code exactly as it is. Compare the step with `## [x] Current state`: for every line there that your code changed or removed, add a `~` line for it in the step (a changed logic line is a `~` of the old line plus the new one). A line with parentheses is read as a method, so write a record's or class's data as fields (`- Id: int`), not as `- record(Id, Name)`.
+11. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests pass, if there are any). Don't add `[x]` to methods.
+12. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
+13. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
+14. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+15. **Report back** with what you built, whether you ticked the step, and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
 
 ## Writing a spec from existing code
 

@@ -33,6 +33,28 @@ export function claims(nodes: OutlineNode[]): Claim[] {
   return walk(nodes, false);
 }
 
+// The candidate a typo most likely meant, ignoring case: at most 1 edit away for names up to 4 letters, 2 for longer ones.
+export function closest(name: string, candidates: Iterable<string>): string | undefined {
+  let best: string | undefined;
+  let bestDistance = name.length <= 4 ? 2 : 3;
+  for (const c of candidates) {
+    const d = distance(name.toLowerCase(), c.toLowerCase());
+    if (d < bestDistance) [best, bestDistance] = [c, d];
+  }
+  return best;
+}
+
+// Levenshtein distance: inserts, deletes and swaps of one letter each count 1.
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
+}
+
 // A code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List".
 export function symbolName(name: string): string {
   return name.replace(/^\(.*?\)\./, '').replace(/[(<].*$/, '').split('.').pop()!.trim();

@@ -3,7 +3,7 @@ import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { fold } from './snapshot';
-import { builtinTypes, claims, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
+import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
 
 const text = [
   '- see @api/upload.go.',
@@ -222,5 +222,12 @@ assert.deepStrictEqual(claimed.map((c) => `${c.line} ${c.path} ${c.name}`),
   'types and methods of done steps, not fields, + units or open steps');
 assert.deepStrictEqual(['Add(double, double)', '(*Book).Save', 'List<T>', 'Store.save', ' main '].map(symbolName),
   ['Add', 'Save', 'List', 'save', 'main']);
+
+assert.strictEqual(closest('Pussh', ['Push', 'wait']), 'Push', 'a typo');
+assert.strictEqual(closest('getbook', ['GetBook', 'GetBooks']), 'GetBook', 'a case slip');
+assert.strictEqual(closest('Database', ['Books']), undefined, 'an inherited member is not a typo');
+assert.strictEqual(closest('cs', ['GetBook', 'GetBooks']), undefined, 'a file extension is not a typo');
+assert.strictEqual(closest('Pul', ['Push']), undefined, 'short names allow one edit only');
+assert.strictEqual(closest('Pus', ['Push']), 'Push');
 
 console.log('ok');

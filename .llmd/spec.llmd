@@ -68,6 +68,8 @@ lang: typescript
     - a code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List"
   // decided: types and methods only
   // fields are risky: Python attributes and Go embedded fields often aren't document symbols
+  - closest(name: string, candidates: Iterable<string>) -> string | undefined
+    - the candidate a typo most likely meant, ignoring case: at most 1 edit away for names up to 4 letters, 2 for longer ones
 
 @src/extension.ts
   - activate(context: vscode.ExtensionContext)
@@ -87,6 +89,7 @@ lang: typescript
     - after a "/", keep walking one folder level at a time
     - add driftProblems to the spec's warnings
     - rerun it when the spec opens and whenever any file is saved
+    - no drift warnings for specs in .llmd/archive/: they describe the code as it was
   - doneLines(text: string) -> number[]
     - lines of [x] methods plus the deeper-indented lines under them
     - also every line of a done step, down to the next heading of the same or a higher level
@@ -102,8 +105,9 @@ lang: typescript
     - nothing inside @ and + paths
     - in a type position, offer declared types first, then symbols.builtinTypes; ":" also triggers it
   - callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
-    - warn on Name.member when Name is a declared type without that member
     // unit names aren't checked: prose like "extension.ts" would look like a call
+    - warn only when the member is a likely typo of a declared one, and suggest it: "Debouncer has no member 'Pussh'. Did you mean 'Push'?"
+    // inherited members like DbContext.Database and file names like BookService.cs in prose aren't typos
   - enter(editor: vscode.TextEditor)
     - an empty "* " line steps out like an empty "- ", keeping its "* "
   - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
@@ -138,6 +142,7 @@ lang: typescript
   - check "- : Name" in the outline, typeSpans, builtinTypes and inTypePosition
   - check fold: new unit, merged method, + to @, ~ removals, decided lines, open steps untouched
   - check claims: done vs open steps, @ vs + units, types and methods
+  - check closest: a typo, a case slip, nothing close, short names
 
 @src/e2e.ts
   - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
@@ -149,6 +154,7 @@ lang: typescript
   - check "* " coloring and Enter after a "* " line
   - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
   - an open step listing a missing function gets no warning
+  - the typo warning suggests the declared member; an undeclared member that isn't a typo doesn't warn
 
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
@@ -173,6 +179,10 @@ lang: typescript
   - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
   // decided: a "*" line at step level lets the agent choose the files; the report lists them
   // decided: build, then report the decisions; no design approval first
+  - before ticking, make sure the step, once folded, describes the code as it really is
+    - add "~" lines for anything in Current state the step's code changed or removed
+    - a line with parentheses is read as a method; write a record's or class's data as fields
+  - adding those "~" lines is one more spec edit the agent may make on its own
 
 @README.md
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
@@ -191,6 +201,8 @@ lang: typescript
   - that the agent replaces "*" lines with what it built before the step is folded
   - drift warnings under Editor help, and that they need the language's extension installed
   - in Known limits: only names are checked, not signatures or logic
+  - typo warnings only fire for likely typos, and say what was meant
+  - the archive isn't drift-checked
 
 @src/agent.ts
   - agentCommand(command: string, step: string, file: string, shell: string) -> string
