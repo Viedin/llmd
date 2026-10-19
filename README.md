@@ -43,7 +43,7 @@ New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
 The `llmd` command folds finished steps into the snapshot (see [The snapshot](#the-snapshot)). It doesn't need VS Code, so it works the same from Zed or any terminal:
 
 ```bash
-npm install -g github:viedin/llmd
+npm install -g https://github.com/viedin/llmd/releases/latest/download/llmd.tgz
 ```
 
 ### Working on LLMD itself
@@ -62,6 +62,13 @@ Link the skill and the CLI to this repo, so edits apply straight away (`npm run 
 ln -sfn "$PWD/skills/llmd" ~/.claude/skills/llmd
 ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd
 npm link
+```
+
+To release the CLI, bump `version` in `package.json`, commit, then push a matching tag. The Release workflow builds `llmd.tgz` and attaches it to a GitHub release:
+
+```bash
+git tag v0.0.1
+git push origin v0.0.1
 ```
 
 ## 2. Start a project
