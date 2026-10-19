@@ -206,6 +206,8 @@ const fresh = fold('# T\r\n\r\n## [x] One\r\n+a.go\r\n  - A()\r\n  ```\r\n  ## n
 assert.strictEqual(fresh.text, '# T\r\n\r\n## [x] Current state\r\n\r\n@a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n',
   'Current state is created above the first step; fences and CRLF survive');
 assert.deepStrictEqual(fold('# T\n## Open\n').folded, [], 'nothing done, nothing folded');
+assert.strictEqual(fold('## [x] Current state\n@Migrations\n  - generated: ef migrations add Init\n## [x] Identity\n@Migrations\n  - generated: ef migrations add Identity\n').text,
+  '## [x] Current state\n\n@Migrations\n  - generated: ef migrations add Init\n  - generated: ef migrations add Identity\n', 'each generated: command is kept');
 
 const claimed = claims(parseOutline([
   '# App', //                   0

@@ -33,9 +33,10 @@ function tree(lines: string[]): Line[] {
 }
 
 // What a line is matched on: a unit by path, a symbol by name, a logic line or anything else by its text.
+// A "- generated: <command>" line is a note, not a field, so each command is kept.
 // ponytail: overloads share a name, so they merge into one method
 export function key(text: string, logic = false): string {
-  if (logic) return 'text ' + text;
+  if (logic || /^-\s+generated:/.test(text)) return 'text ' + text;
   const u = text.match(UNIT);
   if (u) return 'unit ' + u[2];
   const s = text.match(TYPE) ?? text.match(METHOD) ?? text.match(FIELD);
