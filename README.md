@@ -158,6 +158,7 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 - **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and `Type.member` names that aren't declared.
+- **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
 
 ### Tips
 
@@ -246,3 +247,4 @@ The extension is described in its own format in [.llmd/spec.llmd](.llmd/spec.llm
 - If you press Enter very quickly after typing a method line, the `- ` is sometimes not added.
 - `llmd snapshot` only adds logic lines, so when a step changes how a method behaves, its old line stays in Current state until a step removes it with `~`.
 - Methods with the same name (overloads) merge into one in the snapshot.
+- Drift warnings only check that names exist, not signatures, fields or logic. Folder units like a Go package aren't checked.

@@ -14,6 +14,30 @@ export interface Call {
   end: number;
 }
 
+export interface Claim {
+  path: string;
+  name: string;
+  line: number;
+}
+
+// What done steps promise the code has: the types and methods under their @ units.
+// Open steps and + units promise nothing yet; fields are left out because many languages don't list them as symbols.
+export function claims(nodes: OutlineNode[]): Claim[] {
+  const walk = (nodes: OutlineNode[], done: boolean): Claim[] => nodes.flatMap((n) => {
+    if (n.kind === 'heading') return walk(n.children, done || n.detail === 'done');
+    if (n.kind !== 'unit' || !done || n.detail === 'new file') return [];
+    const inside = (nodes: OutlineNode[]): Claim[] => nodes.flatMap((c) =>
+      c.kind === 'type' || c.kind === 'method' ? [{ path: n.name, name: c.name, line: c.line }, ...inside(c.children)] : []);
+    return inside(n.children);
+  });
+  return walk(nodes, false);
+}
+
+// A code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List".
+export function symbolName(name: string): string {
+  return name.replace(/^\(.*?\)\./, '').replace(/[(<].*$/, '').split('.').pop()!.trim();
+}
+
 const PATH = /(?<![\w@])[@+][\w\-./]+/g;
 const CALL = /(?<![\w./-])([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g;
 

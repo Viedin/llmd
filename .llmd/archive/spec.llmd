@@ -344,3 +344,45 @@
 @README.md
   - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
   - that the agent replaces "*" lines with what it built before the step is folded
+
+## [x] Drift warnings
+
+// A done step is a promise about the code. Warn when the code no longer keeps it.
+// The language's own extension provides the code's symbols, so there's no parser per language.
+
+@src/symbols.ts
+  : Claim
+    - path: string
+    - name: string
+    - line: number
+  - claims(nodes: OutlineNode[]) -> Claim[]
+    - every type and method declared under an @ unit of a done step, with the unit's path and the declaring line
+    - + units are skipped: in a done step they should have become @ already
+  - symbolName(name: string) -> string
+    - a code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List"
+  // decided: types and methods only
+  // fields are risky: Python attributes and Go embedded fields often aren't document symbols
+
+@src/extension.ts
+  - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
+    - group symbols.claims by path; for each file, get its symbols with vscode.executeDocumentSymbolProvider
+    - flatten the symbol tree to names, without parameter lists or receivers, so "Add(double, double)" and "(*Book).Save" become "Add" and "Save"
+    - warn "<path> has no '<name>'" on the declaring line when the name isn't there
+    - no warnings for a file whose language has no symbol provider: no answer isn't the same as a missing symbol
+  // decided: names only; language servers format parameters too differently to compare
+  - activate(context: vscode.ExtensionContext)
+    - add driftProblems to the spec's warnings
+    - rerun it when the spec opens and whenever any file is saved
+  // decided: on open and on save, not while typing
+  // after the Snapshot step, done steps are folded away, so this checks Current state
+
+@src/test.ts
+  - check claims: done vs open steps, @ vs + units, types and methods
+
+@src/e2e.ts
+  - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
+  - an open step listing a missing function gets no warning
+
+@README.md
+  - drift warnings under Editor help, and that they need the language's extension installed
+  - in Known limits: only names are checked, not signatures or logic

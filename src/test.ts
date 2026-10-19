@@ -3,7 +3,7 @@ import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { fold } from './snapshot';
-import { builtinTypes, findCalls, indexSymbols, inPath, inTypePosition, typeSpans } from './symbols';
+import { builtinTypes, claims, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
 
 const text = [
   '- see @api/upload.go.',
@@ -199,5 +199,28 @@ const fresh = fold('# T\r\n\r\n## [x] One\r\n+a.go\r\n  - A()\r\n  ```\r\n  ## n
 assert.strictEqual(fresh.text, '# T\r\n\r\n## [x] Current state\r\n\r\n@a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n',
   'Current state is created above the first step; fences and CRLF survive');
 assert.deepStrictEqual(fold('# T\n## Open\n').folded, [], 'nothing done, nothing folded');
+
+const claimed = claims(parseOutline([
+  '# App', //                   0
+  '## [x] Current state', //    1
+  '@src/store.ts', //           2
+  '  : Store', //               3
+  '    - items: Todo[]', //     4
+  '    - save(t: Todo)', //     5
+  '  - load() -> Todo[]', //    6
+  '+src/new.ts', //             7
+  '  - fresh()', //             8
+  '### Notes', //               9
+  '@src/main.ts', //            10
+  '  - main()', //              11
+  '## Open', //                 12
+  '@src/store.ts', //           13
+  '  - planned()', //           14
+].join('\n')));
+assert.deepStrictEqual(claimed.map((c) => `${c.line} ${c.path} ${c.name}`),
+  ['3 src/store.ts Store', '5 src/store.ts save', '6 src/store.ts load', '11 src/main.ts main'],
+  'types and methods of done steps, not fields, + units or open steps');
+assert.deepStrictEqual(['Add(double, double)', '(*Book).Save', 'List<T>', 'Store.save', ' main '].map(symbolName),
+  ['Add', 'Save', 'List', 'save', 'main']);
 
 console.log('ok');

@@ -57,6 +57,17 @@ lang: typescript
     - after "- name:" in a field, or after the name in "- name(...)"
   - typeSpans(text: string, nodes: OutlineNode[]) -> { line: number; start: number; end: number }[]
     - built-in and declared type names in field types and method signatures; skip qualified names like time.Time
+  : Claim
+    - path: string
+    - name: string
+    - line: number
+  - claims(nodes: OutlineNode[]) -> Claim[]
+    - every type and method declared under an @ unit of a done step, with the unit's path and the declaring line
+    - + units are skipped: in a done step they should have become @ already
+  - symbolName(name: string) -> string
+    - a code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List"
+  // decided: types and methods only
+  // fields are risky: Python attributes and Go embedded fields often aren't document symbols
 
 @src/extension.ts
   - activate(context: vscode.ExtensionContext)
@@ -74,6 +85,8 @@ lang: typescript
     - color symbols.typeSpans as semantic "type" tokens, with semantic highlighting on for llmd
     - right after @ or a line-start +, offer every file and folder in the project, skipping .git, node_modules and build output
     - after a "/", keep walking one folder level at a time
+    - add driftProblems to the spec's warnings
+    - rerun it when the spec opens and whenever any file is saved
   - doneLines(text: string) -> number[]
     - lines of [x] methods plus the deeper-indented lines under them
     - also every line of a done step, down to the next heading of the same or a higher level
@@ -93,6 +106,14 @@ lang: typescript
     // unit names aren't checked: prose like "extension.ts" would look like a call
   - enter(editor: vscode.TextEditor)
     - an empty "* " line steps out like an empty "- ", keeping its "* "
+  - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
+    - group symbols.claims by path; for each file, get its symbols with vscode.executeDocumentSymbolProvider
+    - flatten the symbol tree to names, without parameter lists or receivers, so "Add(double, double)" and "(*Book).Save" become "Add" and "Save"
+    - warn "<path> has no '<name>'" on the declaring line when the name isn't there
+    - no warnings for a file whose language has no symbol provider: no answer isn't the same as a missing symbol
+  // decided: names only; language servers format parameters too differently to compare
+  // decided: on open and on save, not while typing
+  // after the Snapshot step, done steps are folded away, so this checks Current state
 
 @language-configuration.json
   - on Enter after a unit, type or method line, indent one level and start the line with "- "
@@ -116,6 +137,7 @@ lang: typescript
   - check openSteps, and agentCommand quoting for zsh, pwsh and cmd
   - check "- : Name" in the outline, typeSpans, builtinTypes and inTypePosition
   - check fold: new unit, merged method, + to @, ~ removals, decided lines, open steps untouched
+  - check claims: done vs open steps, @ vs + units, types and methods
 
 @src/e2e.ts
   - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
@@ -125,6 +147,8 @@ lang: typescript
   - check Enter after a logic line, then stepping out twice from an empty bullet
   - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
   - check "* " coloring and Enter after a "* " line
+  - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
+  - an open step listing a missing function gets no warning
 
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
@@ -165,6 +189,8 @@ lang: typescript
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step
   - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
   - that the agent replaces "*" lines with what it built before the step is folded
+  - drift warnings under Editor help, and that they need the language's extension installed
+  - in Known limits: only names are checked, not signatures or logic
 
 @src/agent.ts
   - agentCommand(command: string, step: string, file: string, shell: string) -> string
@@ -203,43 +229,3 @@ lang: typescript
     - "llmd snapshot [spec]" folds the spec in place, appends the folded steps to .llmd/archive/<spec>.llmd and prints their titles
     - without a spec, use the only .llmd file in .llmd/, else say which ones there are
     - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
-
-## Drift warnings
-
-// A done step is a promise about the code. Warn when the code no longer keeps it.
-// The language's own extension provides the code's symbols, so there's no parser per language.
-
-@src/symbols.ts
-  : Claim
-    - path: string
-    - name: string
-    - line: number
-  - claims(nodes: OutlineNode[]) -> Claim[]
-    - every type and method declared under an @ unit of a done step, with the unit's path and the declaring line
-    - + units are skipped: in a done step they should have become @ already
-  ? fields too, or just types and methods
-  // fields are risky: Python attributes and Go embedded fields often aren't document symbols
-
-@src/extension.ts
-  - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
-    - group symbols.claims by path; for each file, get its symbols with vscode.executeDocumentSymbolProvider
-    - flatten the symbol tree to names, without parameter lists or receivers, so "Add(double, double)" and "(*Book).Save" become "Add" and "Save"
-    - warn "<path> has no '<name>'" on the declaring line when the name isn't there
-    - no warnings for a file whose language has no symbol provider: no answer isn't the same as a missing symbol
-  ? check the stripped name only, or also the arity of methods
-  - activate(context: vscode.ExtensionContext)
-    - add driftProblems to the spec's warnings
-    - rerun it when the spec opens and whenever any file is saved
-  ? also on spec edits (debounced), or is opening and saving enough
-  // after the Snapshot step, done steps are folded away, so this checks Current state
-
-@src/test.ts
-  - check claims: done vs open steps, @ vs + units, types and methods
-
-@src/e2e.ts
-  - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
-  - an open step listing a missing function gets no warning
-
-@README.md
-  - drift warnings under Editor help, and that they need the language's extension installed
-  - in Known limits: only names are checked, not signatures or logic

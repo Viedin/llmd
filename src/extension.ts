@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { agentCommand } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
-import { builtinTypes, findCalls, indexSymbols, inPath, inTypePosition, typeSpans } from './symbols';
+import { builtinTypes, Claim, claims, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
 
 // @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 function rootOf(doc: vscode.TextDocument): vscode.Uri {
@@ -137,6 +137,54 @@ export function callProblems(doc: vscode.TextDocument): vscode.Diagnostic[] {
   });
 }
 
+// Symbol names per code file, from its language's own extension. Dropped when the file is saved.
+const codeSymbols = new Map<string, Promise<Set<string> | undefined>>();
+
+function symbolsOf(uri: vscode.Uri): Promise<Set<string> | undefined> {
+  const key = uri.toString();
+  let names = codeSymbols.get(key);
+  if (!names) {
+    names = (async () => {
+      const found = await vscode.commands.executeCommand<(vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined>(
+        'vscode.executeDocumentSymbolProvider', uri);
+      if (!found?.length) return undefined; // no provider, or it isn't ready yet: no verdict
+      const set = new Set<string>();
+      const walk = (symbols: (vscode.DocumentSymbol | vscode.SymbolInformation)[]) => symbols.forEach((s) => {
+        set.add(symbolName(s.name));
+        if ('children' in s) walk(s.children);
+      });
+      walk(found);
+      return set;
+    })();
+    codeSymbols.set(key, names);
+    names.then((set) => set || codeSymbols.delete(key)); // ask again next time rather than remember "no answer"
+  }
+  return names;
+}
+
+const driftProblem = (doc: vscode.TextDocument, c: Claim) => {
+  const line = doc.lineAt(c.line);
+  const range = new vscode.Range(c.line, line.firstNonWhitespaceCharacterIndex, c.line, line.text.length);
+  return new vscode.Diagnostic(range, `${c.path} has no '${c.name}'`, vscode.DiagnosticSeverity.Warning);
+};
+
+// Types and methods that done steps declare but the code no longer has.
+export async function driftProblems(doc: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
+  const root = rootOf(doc);
+  const files = new Map<string, Promise<Set<string> | undefined>>();
+  const problems: vscode.Diagnostic[] = [];
+  for (const c of claims(parseOutline(doc.getText()))) {
+    if (!files.has(c.path)) {
+      const uri = vscode.Uri.joinPath(root, c.path);
+      // Missing files already warn; folder units like Go packages aren't checked.
+      files.set(c.path, statOrNull(uri).then((stat) => (stat && stat.type & vscode.FileType.File ? symbolsOf(uri) : undefined)));
+    }
+    const names = await files.get(c.path)!;
+    if (names && !names.has(c.name)) problems.push(driftProblem(doc, c));
+  }
+  return problems;
+}
+
 // Every line of a done step (## [x] down to the next heading of the same or a higher level),
 // plus [x] methods and the deeper-indented lines under them.
 export function doneLines(text: string): number[] {
@@ -200,10 +248,21 @@ export function activate(context: vscode.ExtensionContext) {
   const selector: vscode.DocumentSelector = { language: 'llmd' };
   const diagnostics = vscode.languages.createDiagnosticCollection('llmd');
 
+  // Drift is worked out on open and on save. In between, its warnings follow their lines but nothing new is flagged,
+  // so a half-typed name in Current state doesn't warn.
+  const drift = new Map<string, Set<string>>(); // spec → drift messages from its last check
   const check = async (doc: vscode.TextDocument) => {
-    if (doc.languageId === 'llmd') diagnostics.set(doc.uri, [...(await scan(doc)).problems, ...callProblems(doc)]);
+    if (doc.languageId !== 'llmd') return;
+    const known = drift.get(doc.uri.toString()) ?? new Set();
+    const drifted = claims(parseOutline(doc.getText())).map((c) => driftProblem(doc, c)).filter((d) => known.has(d.message));
+    diagnostics.set(doc.uri, [...(await scan(doc)).problems, ...callProblems(doc), ...drifted]);
   };
-  vscode.workspace.textDocuments.forEach(check);
+  const checkDrift = async (doc: vscode.TextDocument) => {
+    if (doc.languageId !== 'llmd') return;
+    drift.set(doc.uri.toString(), new Set((await driftProblems(doc)).map((d) => d.message)));
+    await check(doc);
+  };
+  vscode.workspace.textDocuments.forEach(checkDrift);
 
   const dim = vscode.window.createTextEditorDecorationType({ opacity: '0.5' });
   const decorate = (editor: vscode.TextEditor) => {
@@ -215,12 +274,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     diagnostics,
     dim,
-    vscode.workspace.onDidOpenTextDocument(check),
+    vscode.workspace.onDidOpenTextDocument(checkDrift),
+    vscode.workspace.onDidSaveTextDocument((saved) => {
+      codeSymbols.delete(saved.uri.toString());
+      vscode.workspace.textDocuments.forEach(checkDrift);
+    }),
     vscode.workspace.onDidChangeTextDocument((e) => {
       check(e.document);
       vscode.window.visibleTextEditors.filter((ed) => ed.document === e.document).forEach(decorate);
     }),
-    vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri)),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      diagnostics.delete(doc.uri);
+      drift.delete(doc.uri.toString());
+    }),
     vscode.window.onDidChangeVisibleTextEditors((editors) => editors.forEach(decorate)),
     vscode.commands.registerCommand('llmd.enter', () => {
       const editor = vscode.window.activeTextEditor;

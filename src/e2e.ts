@@ -37,6 +37,7 @@ export async function run() {
   await checkHighlighting();
   await checkEnter();
   await checkSymbols();
+  await checkDrift();
   console.log('e2e ok');
 }
 
@@ -188,4 +189,36 @@ async function checkTypes() {
   const semantic = await vscode.commands.executeCommand<vscode.SemanticTokens>('vscode.provideDocumentSemanticTokens', doc.uri);
   assert.deepStrictEqual(legend.tokenTypes, ['type']);
   assert.strictEqual(semantic.data.length / 5, 2, 'int and book are colored as types');
+}
+
+async function checkDrift() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-'));
+  const code = vscode.Uri.file(path.join(dir, 'store.ts'));
+  fs.writeFileSync(code.fsPath, 'export class Store {\n  save() {}\n}\nexport function load() {}\n');
+  // Wait for the TypeScript server, so the spec's first check gets an answer.
+  for (let i = 0; i < 60; i++) {
+    const found = await vscode.commands.executeCommand<unknown[] | undefined>('vscode.executeDocumentSymbolProvider', code);
+    if (found?.length) break;
+    await sleep(250);
+  }
+  const file = path.join(dir, 'drift.llmd');
+  fs.writeFileSync(file, [
+    '## [x] Current state',
+    '@store.ts',
+    '  : Store',
+    '    - save()',
+    '    - remove()',
+    '  - load()',
+    '## Open',
+    '@store.ts',
+    '  - planned()',
+  ].join('\n'));
+  const spec = await vscode.workspace.openTextDocument(file);
+  await vscode.window.showTextDocument(spec);
+  let drift: string[] = [];
+  for (let i = 0; i < 40 && drift.length === 0; i++) {
+    await sleep(250);
+    drift = vscode.languages.getDiagnostics(spec.uri).map((d) => d.message).filter((m) => m.includes('has no'));
+  }
+  assert.deepStrictEqual(drift, ["store.ts has no 'remove'"], "a done step's missing method warns; an open step's doesn't");
 }
