@@ -64,7 +64,6 @@ lang: typescript
     - make @refs to files Ctrl+clickable
     - complete files and folders after @ and /, one folder level at a time
     - dim [x] methods and their logic lines, using doneLines
-    - on Enter on an empty "- " line, remove it and outdent; otherwise a normal Enter
     - show outline.parseOutline as document symbols, using toSymbols
     - register findDefinition, completeNames and callProblems next to the other providers and warnings
     - resolve @paths from refs.projectOf when the spec is in .llmd/, else from the workspace folder as before
@@ -122,12 +121,6 @@ lang: typescript
   - check Enter after a logic line, then stepping out twice from an empty bullet
   - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
 
-@HOWTO.md
-  - how to install the extension and the skill
-  - how to write a spec, with every line type and an example
-  - how to work with Claude from a spec: implement, answer ? questions, review [x] ticks
-  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
-
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
   - "implement the next step" means the first unticked step from the top; touch only what it lists
@@ -153,6 +146,10 @@ lang: typescript
   - say the agent skims the other specs, and asks about conflicting open steps
   - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
   - the suggested CLAUDE.md line points at Current state as the architecture
+  - how to install the extension, the skill and the CLI
+  - how to write a spec, with every line type and an example
+  - how to work with Claude from a spec: implement, answer ? questions, review, snapshot and commit
+  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
 
 @src/agent.ts
   - agentCommand(command: string, step: string, file: string, shell: string) -> string

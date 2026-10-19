@@ -291,3 +291,20 @@
 @README.md
   - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
   - the suggested CLAUDE.md line points at Current state as the architecture
+
+## [x] Clean up Current state
+
+// The fold only adds lines, so these outlived the steps that replaced them. The code already matches; this step only fixes the snapshot.
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - ~on Enter on an empty "- " line, remove it and outdent; otherwise a normal Enter
+
+~@HOWTO.md
+// HOWTO.md became README.md; its lines move there
+
+@README.md
+  - how to install the extension, the skill and the CLI
+  - how to write a spec, with every line type and an example
+  - how to work with Claude from a spec: implement, answer ? questions, review, snapshot and commit
+  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
