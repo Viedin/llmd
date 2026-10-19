@@ -55,11 +55,11 @@ After you change the CLI's code, `npm run compile` is enough: the link points at
 ## 2. Start a project
 
 1. Open the project **folder** in VS Code with File → Open Folder, so `@` completion lists your files.
-2. Create a spec in a `.llmd/` folder at the project root, e.g. `.llmd/flow.llmd`. That's where the agent looks when you don't name a spec, and `@` paths in it still start from the project root.
+2. Create a spec per feature in a `.llmd/` folder at the project root, e.g. `.llmd/book.llmd` (see [One spec per feature](#one-spec-per-feature)). That's where the agent looks when you don't name a spec, and `@` paths in it still start from the project root.
 3. Decide whether to commit the specs. Committed, they're a history of what you planned. To keep them to yourself, add `.llmd/` to the project's `.gitignore`, or to your global one (`~/.config/git/ignore`) to skip them in every repo, e.g. at work.
 4. Optionally, add this line to the project's `AGENTS.md`, so the agent keeps the spec in mind even when you don't mention it:
    ```
-   The architecture is the "## [x] Current state" step of .llmd/flow.llmd; the ## steps below it are planned work. Keep it up to date when changing code.
+   The architecture is the "## [x] Current state" step of each spec in .llmd/, one spec per feature; the ## steps below it are planned work. Keep them up to date when changing code.
    ```
    Codex reads `AGENTS.md` on its own. For Claude Code, also add a `CLAUDE.md` holding just `@AGENTS.md`, which pulls the file in. So both agents share one file.
 
@@ -76,6 +76,35 @@ Each `##` heading is a **step**: one piece of work, like an issue.
 - Anything above the first step (the title, `lang:`, general `// notes`) is context for every step.
 - The same file can appear in several steps. Each step says what *that* step adds or changes in it.
 - A done step is greyed out, so the open steps stand out. In the outline it shows as "done".
+
+### One spec per feature
+
+Each spec is a vertical slice: `.llmd/book.llmd` holds everything for books, from the endpoints and the service to the entity and its db mapping. `.llmd/app.llmd` holds the shared setup, like startup, the db context and auth.
+
+```
+# Books
+lang: csharp
+
+## [x] Current state
+
+@Entities/Book.cs
+  - Id: int
+  - Title: string
+
+@Data/AppDbContext.cs
+  - Books: DbSet<Book>
+
+@Services/BookService.cs
+  - GetAll() -> List<Book>
+
+@Endpoints/BookEndpoints.cs
+  - MapBooks(app)
+    - GET /books calls BookService.GetAll
+```
+
+- **A shared file appears in every spec that adds to it.** Each lists only its own feature's part: `book.llmd` has `Books` in `AppDbContext.cs`, and `loan.llmd` has `Loans`.
+- **A step goes in the spec of the feature it's for**, even when it touches another feature's files. A loan step that adds `IsAvailable` to `Book.cs` lives in `loan.llmd`. The agent checks the other specs for open steps on the same files.
+- **A small tool or a library** with no clear features can keep a single spec.
 
 ### Line types
 
@@ -204,7 +233,7 @@ Both terminals need VS Code's shell integration, which is on by default for zsh,
 
 Or ask yourself in Claude Code or Codex, in the project folder:
 
-- `implement the next step` builds the first step without `[x]`, from the spec in `.llmd/`. With several specs there, name one: `implement the next step in .llmd/flow.llmd`.
+- `implement the next step` builds the first step without `[x]`, from the spec in `.llmd/`. With several specs there, name one: `implement the next book step` or `implement the next step in .llmd/book.llmd`.
 - `implement "More user interactions"` builds a step by name.
 - `plan "More user interactions"` talks it through without writing code.
 - `implement ReadUserInput` builds just one method of a step.
@@ -246,7 +275,7 @@ The merge is plain text, with no AI involved:
 - A `~` line removes its match: `- ~Stop()`, `~@Old.cs` or `- ~print the result`. To rename, remove the old name and add the new one.
 - `// decided:` lines are kept. The step's other notes are only in the archive.
 
-Without a spec name it uses the only spec in `.llmd/`. To start an older spec that has many done steps, run it once by hand.
+Without a spec name it folds every spec in `.llmd/`. To start an older spec that has many done steps, run it once by hand.
 
 ### Commit
 
@@ -259,7 +288,7 @@ In a git repo, the agent offers to commit each finished step, with the step's ti
 
 ### Start from existing code
 
-`describe @src as llmd` writes a spec of code that already exists to `.llmd/`, as one `## [x] Current state` step. Add your next steps below it.
+`describe @src as llmd` writes specs of code that already exists to `.llmd/`: one per feature plus `app.llmd`, each as one `## [x] Current state` step. Add your next steps below them.
 
 ## 5. Work on the extension itself
 

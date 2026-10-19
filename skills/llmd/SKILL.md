@@ -9,7 +9,13 @@ An `.llmd` file is a spec the user writes so they can steer the architecture wit
 
 ## Where specs live
 
-Specs live in a `.llmd/` folder at the project root, e.g. `.llmd/flow.llmd`. When the user doesn't name a spec, look there: if there's one, use it; if there are several, ask which one. New specs go there too, unless the user says otherwise. `@` paths in a spec always start from the project root (the folder holding `.llmd/`), not from `.llmd/`.
+Specs live in a `.llmd/` folder at the project root. New specs go there too, unless the user says otherwise. `@` paths in a spec always start from the project root (the folder holding `.llmd/`), not from `.llmd/`.
+
+There's **one spec per feature**, a vertical slice: `.llmd/book.llmd` holds everything for books, from the endpoints and the service to the entity and its db mapping. `.llmd/app.llmd` holds the shared setup: startup, the db context, auth.
+
+- A shared file appears in every spec that adds to it, and each lists only its own feature's part. `book.llmd` lists `@Data/AppDbContext.cs` with just `- Books: DbSet<Book>`.
+- A step goes in the spec of the feature it's for, even when it touches another feature's files. A loan step that adds `IsAvailable` to `Book.cs` lives in `loan.llmd`.
+- When the user doesn't name a spec: if there's one, use it. If there are several, use the one the request points to ("the next book step"), else ask which one.
 
 ## Syntax
 
@@ -104,8 +110,8 @@ lang: go
 
 When asked to describe code "as llmd":
 
-- Write it to `.llmd/<name>.llmd` unless the user names another place.
-- Put it all in one `## [x] Current state` step, so new work can follow as plain `##` steps.
+- Write one spec per feature to `.llmd/<feature>.llmd`, plus `.llmd/app.llmd` for the shared setup, unless the user names another place. Code with no clear features, like a small tool or a library, gets a single spec.
+- Put each spec's code in one `## [x] Current state` step, so new work can follow as plain `##` steps. A shared file goes in each spec with only that feature's part.
 - Write one `@path` unit per file, in the order a reader would follow the flow (entry point first).
 - List types with `:`, plus fields and methods with their real signatures.
 - Give each method one to three short logic lines that say what it does, not how. Use `Name.Method` for calls into other units.

@@ -492,3 +492,23 @@
 
 @src/e2e.ts
   - check "! " coloring and Enter after a "! " line
+
+## [x] Feature specs
+// one spec per feature, a vertical slice: book.llmd holds the book's endpoints, service, entity and db mapping
+@src/cli.ts
+  - main(args: string[])
+    - ~without a spec, use the only .llmd file in .llmd/, else say which ones there are
+    - without a spec, fold every .llmd file in .llmd/, and say "Nothing to fold" only when none had done steps
+    ! "llmd snapshot" with two specs that each have a done step folds both and archives each under its own name
+
+@skills/llmd/SKILL.md
+  - specs are one per feature, plus app.llmd for shared setup like startup, the db context and auth
+  - a shared file appears in every spec that adds to it, each listing only its own feature's part
+  - a step goes in the spec of the feature it's for, even when it touches another feature's files
+  - with several specs and none named, use the one the request points to ("the next book step"), else ask
+  - describing existing code writes one spec per feature plus app.llmd, each with its own Current state; one spec is fine when there are no clear features
+
+@README.md
+  - a "One spec per feature" section with a book example and the shared-file rule
+  - the AGENTS.md line points at the Current state of every spec in .llmd/
+  - "llmd snapshot" without a name folds every spec; describe writes one spec per feature plus app.llmd
