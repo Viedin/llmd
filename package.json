@@ -2,7 +2,7 @@
   "name": "llmd",
   "displayName": "LLMD",
   "description": "Markdown flow specs with @file references, for planning work with an LLM",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "viedin",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/viedin/llmd" },
