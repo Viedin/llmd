@@ -11,3 +11,4 @@ out/cli.js
 skills/**
 .llmd/**
 example.llmd
+.claude-plugin/**

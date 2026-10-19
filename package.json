@@ -3,8 +3,13 @@
   "displayName": "LLMD",
   "description": "Markdown flow specs with @file references, for planning work with an LLM",
   "version": "0.0.1",
-  "publisher": "filip",
-  "license": "UNLICENSED",
+  "publisher": "viedin",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/viedin/llmd" },
+  "homepage": "https://github.com/viedin/llmd#readme",
+  "bugs": "https://github.com/viedin/llmd/issues",
+  "keywords": ["llm", "spec", "claude", "codex", "agent", "markdown"],
+  "categories": ["Programming Languages", "AI"],
   "engines": {
     "vscode": "^1.93.0"
   },
@@ -79,7 +84,8 @@
     "watch": "tsc -watch -p .",
     "vscode:prepublish": "npm run compile",
     "test": "npm run compile && node out/test.js",
-    "test:e2e": "npm run compile && node out/runE2E.js"
+    "test:e2e": "npm run compile && node out/runE2E.js",
+    "prepare": "npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

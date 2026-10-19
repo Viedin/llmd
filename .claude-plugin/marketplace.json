@@ -1,0 +1,11 @@
+{
+  "name": "llmd",
+  "owner": { "name": "Viedin" },
+  "plugins": [
+    {
+      "name": "llmd",
+      "source": "./",
+      "description": "Read, write and implement .llmd spec files one step at a time"
+    }
+  ]
+}

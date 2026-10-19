@@ -13,44 +13,56 @@ You only do this once. After that it works in every project.
 
 ### The extension
 
-Build it and install it into your normal VS Code:
+Search for **LLMD** in the Extensions view, or:
 
 ```bash
-npm install
-npx @vscode/vsce package --allow-missing-repository --skip-license --no-rewrite-relative-links
-code --install-extension llmd-0.0.1.vsix --force
+code --install-extension viedin.llmd
 ```
 
-Then reload VS Code (Ctrl+Shift+P → **Developer: Reload Window**). Any file ending in `.llmd` now uses the extension. The status bar's language mode shows **LLMD**.
-
-Run the same three commands again after you change the extension's code.
+Cursor, Windsurf and VSCodium get it from Open VSX under the same name. Any file ending in `.llmd` now uses the extension. The status bar's language mode shows **LLMD**.
 
 ### The skill
 
-Link the skill folder into your agent's skills folder. Run from this repo:
+In Claude Code:
+
+```
+/plugin marketplace add viedin/llmd
+/plugin install llmd@llmd
+```
+
+For Codex and other agents:
 
 ```bash
-ln -sfn "$PWD/skills/llmd" ~/.claude/skills/llmd   # Claude Code
-ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd    # Codex
+npx skills add viedin/llmd
 ```
 
-On Windows (PowerShell), use a junction instead:
-
-```powershell
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\llmd" -Target "C:\Users\filip\code\typescript\llmd\skills\llmd"
-```
-
-Because it's a link, edits to [skills/llmd/SKILL.md](skills/llmd/SKILL.md) apply in every project straight away. New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
+New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
 
 ### The CLI
 
-The `llmd` command folds finished steps into the snapshot (see [The snapshot](#the-snapshot)). It doesn't need VS Code, so it works the same from Zed or any terminal. Run from this repo:
+The `llmd` command folds finished steps into the snapshot (see [The snapshot](#the-snapshot)). It doesn't need VS Code, so it works the same from Zed or any terminal:
 
 ```bash
-npm install && npm run compile && npm link
+npm install -g github:viedin/llmd
 ```
 
-After you change the CLI's code, `npm run compile` is enough: the link points at this repo.
+### Working on LLMD itself
+
+Build the extension and install it into your normal VS Code, then reload the window:
+
+```bash
+npm install
+npx @vscode/vsce package --no-rewrite-relative-links
+code --install-extension llmd-0.0.1.vsix --force
+```
+
+Link the skill and the CLI to this repo, so edits apply straight away (`npm run compile` after changing the CLI):
+
+```bash
+ln -sfn "$PWD/skills/llmd" ~/.claude/skills/llmd
+ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd
+npm link
+```
 
 ## 2. Start a project
 
