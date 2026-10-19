@@ -418,3 +418,48 @@
 @README.md
   - typo warnings only fire for likely typos, and say what was meant
   - the archive isn't drift-checked
+
+## [x] Plan button and one terminal per mode
+
+// Plan: talk a step through with the agent before building it. It reads, asks and suggests spec edits, but writes no code.
+// Each click reuses the agent already running for that mode and project, instead of starting a new session.
+// One terminal per mode, because a plan-mode session can't switch to building by being sent a prompt.
+
+@src/agent.ts
+  - stepPrompt(mode: 'implement' | 'plan', step: string, file: string) -> string
+    - implement: 'implement the step "<step>" in <file>'
+    - plan: 'plan the step "<step>" in <file>' plus: discuss it, ask about anything unclear, suggest what to add or change in the spec, write no code
+  - agentCommand(command: string, prompt: string, shell: string) -> string
+    - ~the command, then the prompt 'implement the step "<step>" in <file>' as one argument
+    - the command, then the prompt quoted as one argument, as before
+
+@src/extension.ts
+  - activate(context: vscode.ExtensionContext)
+    - ~on click, save the spec and run agent.agentCommand in a new terminal at the project root
+    - a "Plan" code lens next to "▶ Implement" on every open step, running the hidden llmd.plan command
+    - remember the terminal started for each mode and project root; forget it when it closes
+    - track which terminals are running a command, from shell integration's start and end events
+  - runAgent(mode: 'implement' | 'plan', uri: vscode.Uri, step: string)
+    - save the spec, then build agent.stepPrompt for the step
+    - when that mode's terminal is still running its agent, send it just the prompt, so the same session takes the next step
+    - when the terminal is there but the agent has exited, send the full agent.agentCommand again
+    - otherwise open a new terminal "LLMD: Implement" or "LLMD: Plan" at the project root and send the full command
+    - the command comes from llmd.agentCommand, or llmd.planCommand for plan
+    // without shell integration there's no telling whether the agent still runs, so a new terminal is the safe choice
+
+@package.json
+  - the llmd.planCommand setting, "claude --permission-mode plan" by default, and the hidden llmd.plan command
+  - engines.vscode and @types/vscode at 1.93, the first version with terminal shell integration events
+
+@skills/llmd/SKILL.md
+  - "plan the step" reads like implementing, then discusses: what's unclear, what's missing, what clashes with the code or other specs
+  - it proposes concrete spec edits (? lines, new lines, new steps) and makes them only once the user agrees; it never writes code
+
+@src/test.ts
+  - check stepPrompt for both modes, and agentCommand quoting with the new arguments
+
+@src/e2e.ts
+  - check that Plan shows next to Implement on open steps only
+
+@README.md
+  - the Plan button, the plan command setting, and that clicks reuse the running session per mode

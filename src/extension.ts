@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { agentCommand } from './agent';
+import { agentCommand, stepPrompt } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
@@ -234,17 +234,42 @@ async function enter(editor: vscode.TextEditor) {
   await vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
 }
 
-// Starts the agent in a new terminal, at the project root, on one step of the saved spec.
-async function implement(uri: vscode.Uri, step: string) {
+type Mode = 'implement' | 'plan';
+const agentTerminals = new Map<string, vscode.Terminal>(); // "<mode> <project root>" → the terminal its agent runs in
+const busy = new Set<vscode.Terminal>(); // terminals running a command, from shell integration
+
+// Hands one step of the saved spec to the agent for that mode: the session already running if there is one,
+// else a new one in its terminal at the project root.
+async function runAgent(mode: Mode, uri: vscode.Uri, step: string) {
   const doc = await vscode.workspace.openTextDocument(uri);
   if (doc.isUntitled) return vscode.window.showWarningMessage('Save the spec first, so the agent can read it.');
   await doc.save();
   const root = rootOf(doc);
   const file = path.relative(root.fsPath, doc.uri.fsPath).split(path.sep).join('/');
-  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || 'claude';
-  const terminal = vscode.window.createTerminal({ name: `LLMD: ${step}`, cwd: root });
+  const prompt = stepPrompt(mode, step, file);
+  const key = `${mode} ${root.toString()}`;
+
+  let terminal = agentTerminals.get(key);
+  // Without shell integration there's no telling whether the agent still runs, so a new terminal is the safe choice.
+  if (terminal && !terminal.shellIntegration) terminal = undefined;
+  if (terminal && busy.has(terminal)) {
+    terminal.show();
+    // ponytail: the pause keeps Enter apart from the text, so the agent doesn't read it as part of a paste
+    terminal.sendText(prompt, false);
+    await new Promise((r) => setTimeout(r, 150));
+    terminal.sendText('\r', false);
+    return;
+  }
+  if (!terminal) {
+    terminal = vscode.window.createTerminal({ name: mode === 'plan' ? 'LLMD: Plan' : 'LLMD: Implement', cwd: root });
+    agentTerminals.set(key, terminal);
+  }
   terminal.show();
-  terminal.sendText(agentCommand(command, step, file, vscode.env.shell));
+  const settings = vscode.workspace.getConfiguration('llmd');
+  const command = mode === 'plan'
+    ? settings.get<string>('planCommand') || 'claude --permission-mode plan'
+    : settings.get<string>('agentCommand') || 'claude';
+  terminal.sendText(agentCommand(command, prompt, vscode.env.shell));
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -298,10 +323,22 @@ export function activate(context: vscode.ExtensionContext) {
       return editor ? enter(editor) : vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
     }),
 
-    vscode.commands.registerCommand('llmd.implement', implement),
+    vscode.commands.registerCommand('llmd.implement', (uri: vscode.Uri, step: string) => runAgent('implement', uri, step)),
+    vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runAgent('plan', uri, step)),
+    vscode.window.onDidStartTerminalShellExecution((e) => busy.add(e.terminal)),
+    vscode.window.onDidEndTerminalShellExecution((e) => busy.delete(e.terminal)),
+    vscode.window.onDidCloseTerminal((t) => {
+      busy.delete(t);
+      for (const [key, terminal] of agentTerminals) if (terminal === t) agentTerminals.delete(key);
+    }),
     vscode.languages.registerCodeLensProvider(selector, {
-      provideCodeLenses: (doc) => openSteps(doc.getText()).map((s) => new vscode.CodeLens(doc.lineAt(s.line).range,
-        { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] })),
+      provideCodeLenses: (doc) => openSteps(doc.getText()).flatMap((s) => {
+        const range = doc.lineAt(s.line).range;
+        return [
+          new vscode.CodeLens(range, { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] }),
+          new vscode.CodeLens(range, { title: '$(comment-discussion) Plan', tooltip: 'Talk this step through with the agent in plan mode, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
+        ];
+      }),
     }),
 
     vscode.languages.registerDocumentSymbolProvider(selector, {

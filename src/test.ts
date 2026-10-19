@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { agentCommand } from './agent';
+import { agentCommand, stepPrompt } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
 import { findRefs, projectOf } from './refs';
 import { fold } from './snapshot';
@@ -96,12 +96,16 @@ assert.deepStrictEqual(openSteps('# T\n## [x] Done\n## Open\n### Sub\n```\n## fe
 ]);
 
 const step = `Don't spend $HOME`;
-assert.strictEqual(agentCommand('codex', step, '.llmd/a.llmd', '/bin/zsh'),
+const prompt = stepPrompt('implement', step, '.llmd/a.llmd');
+assert.strictEqual(prompt, `implement the step "Don't spend $HOME" in .llmd/a.llmd`);
+assert.ok(stepPrompt('plan', 'Export', 'a.llmd').startsWith('plan the step "Export" in a.llmd') &&
+  stepPrompt('plan', 'Export', 'a.llmd').includes("Don't write any code"));
+assert.strictEqual(agentCommand('codex', prompt, '/bin/zsh'),
   `codex 'implement the step "Don'\\''t spend $HOME" in .llmd/a.llmd'`);
-assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
-  `claude 'implement the step "Don''t spend $HOME" in a.llmd'`);
-assert.strictEqual(agentCommand('claude', step, 'a.llmd', 'C:\\Windows\\System32\\cmd.exe'),
-  `claude "implement the step 'Don't spend $HOME' in a.llmd"`);
+assert.strictEqual(agentCommand('claude', prompt, 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
+  `claude 'implement the step "Don''t spend $HOME" in .llmd/a.llmd'`);
+assert.strictEqual(agentCommand('claude', prompt, 'C:\\Windows\\System32\\cmd.exe'),
+  `claude "implement the step 'Don't spend $HOME' in .llmd/a.llmd"`);
 
 const models = [
   'lang: go', //                 0

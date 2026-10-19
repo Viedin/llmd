@@ -81,7 +81,6 @@ lang: typescript
     - register findDefinition, completeNames and callProblems next to the other providers and warnings
     - resolve @paths from refs.projectOf when the spec is in .llmd/, else from the workspace folder as before
     - show a "▶ Implement" code lens on every openSteps step
-    - on click, save the spec and run agent.agentCommand in a new terminal at the project root
     - the command comes from the llmd.agentCommand setting, "claude" by default
     - on Enter on an empty "- " line, outdent one level and keep the "- "; at the outermost level, remove the bullet
     - color symbols.typeSpans as semantic "type" tokens, with semantic highlighting on for llmd
@@ -90,6 +89,9 @@ lang: typescript
     - add driftProblems to the spec's warnings
     - rerun it when the spec opens and whenever any file is saved
     - no drift warnings for specs in .llmd/archive/: they describe the code as it was
+    - a "Plan" code lens next to "▶ Implement" on every open step, running the hidden llmd.plan command
+    - remember the terminal started for each mode and project root; forget it when it closes
+    - track which terminals are running a command, from shell integration's start and end events
   - doneLines(text: string) -> number[]
     - lines of [x] methods plus the deeper-indented lines under them
     - also every line of a done step, down to the next heading of the same or a higher level
@@ -118,6 +120,13 @@ lang: typescript
   // decided: names only; language servers format parameters too differently to compare
   // decided: on open and on save, not while typing
   // after the Snapshot step, done steps are folded away, so this checks Current state
+  - runAgent(mode: 'implement' | 'plan', uri: vscode.Uri, step: string)
+    - save the spec, then build agent.stepPrompt for the step
+    - when that mode's terminal is still running its agent, send it just the prompt, so the same session takes the next step
+    - when the terminal is there but the agent has exited, send the full agent.agentCommand again
+    - otherwise open a new terminal "LLMD: Implement" or "LLMD: Plan" at the project root and send the full command
+    - the command comes from llmd.agentCommand, or llmd.planCommand for plan
+    // without shell integration there's no telling whether the agent still runs, so a new terminal is the safe choice
 
 @language-configuration.json
   - on Enter after a unit, type or method line, indent one level and start the line with "- "
@@ -143,6 +152,7 @@ lang: typescript
   - check fold: new unit, merged method, + to @, ~ removals, decided lines, open steps untouched
   - check claims: done vs open steps, @ vs + units, types and methods
   - check closest: a typo, a case slip, nothing close, short names
+  - check stepPrompt for both modes, and agentCommand quoting with the new arguments
 
 @src/e2e.ts
   - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
@@ -155,6 +165,7 @@ lang: typescript
   - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
   - an open step listing a missing function gets no warning
   - the typo warning suggests the declared member; an undeclared member that isn't a typo doesn't warn
+  - check that Plan shows next to Implement on open steps only
 
 @skills/llmd/SKILL.md
   - "## [ ] Title" is a step and "## [x] Title" is a done step
@@ -183,6 +194,8 @@ lang: typescript
     - add "~" lines for anything in Current state the step's code changed or removed
     - a line with parentheses is read as a method; write a record's or class's data as fields
   - adding those "~" lines is one more spec edit the agent may make on its own
+  - "plan the step" reads like implementing, then discusses: what's unclear, what's missing, what clashes with the code or other specs
+  - it proposes concrete spec edits (? lines, new lines, new steps) and makes them only once the user agrees; it never writes code
 
 @README.md
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
@@ -203,16 +216,22 @@ lang: typescript
   - in Known limits: only names are checked, not signatures or logic
   - typo warnings only fire for likely typos, and say what was meant
   - the archive isn't drift-checked
+  - the Plan button, the plan command setting, and that clicks reuse the running session per mode
 
 @src/agent.ts
-  - agentCommand(command: string, step: string, file: string, shell: string) -> string
-    - the command, then the prompt 'implement the step "<step>" in <file>' as one argument
+  - agentCommand(command: string, prompt: string, shell: string) -> string
     - quote the prompt for pwsh, cmd or a POSIX shell, judged from the shell's path
+    - the command, then the prompt quoted as one argument, as before
+  - stepPrompt(mode: 'implement' | 'plan', step: string, file: string) -> string
+    - implement: 'implement the step "<step>" in <file>'
+    - plan: 'plan the step "<step>" in <file>' plus: discuss it, ask about anything unclear, suggest what to add or change in the spec, write no code
 
 @package.json
   - the llmd.agentCommand setting and the hidden llmd.implement command
   - use images/file.svg as the llmd language icon, for light and dark themes
   - a "bin" entry for llmd, so "npm link" puts it on the PATH
+  - the llmd.planCommand setting, "claude --permission-mode plan" by default, and the hidden llmd.plan command
+  - engines.vscode and @types/vscode at 1.93, the first version with terminal shell integration events
 
 @images/file.svg
   - a checklist glyph, one ticked box and one open, in purple

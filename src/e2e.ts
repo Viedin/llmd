@@ -172,8 +172,10 @@ async function checkSymbols() {
 async function checkCodeLens() {
   const { doc } = await openTemp('lens.llmd', '# Calc\n## [x] Basic\n## More input\n### Notes\n## [ ] Fix it');
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
-  assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.arguments?.[1]]), [[2, 'More input'], [4, 'Fix it']],
-    'Implement shows on open ## steps only');
+  assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.command, l.command?.arguments?.[1]]), [
+    [2, 'llmd.implement', 'More input'], [2, 'llmd.plan', 'More input'],
+    [4, 'llmd.implement', 'Fix it'], [4, 'llmd.plan', 'Fix it'],
+  ], 'Implement and Plan show on open ## steps only');
 }
 
 async function checkTypes() {

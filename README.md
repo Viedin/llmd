@@ -155,7 +155,7 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- ` or `* ` line, Enter starts a new one at the same level.
 - **Enter on an empty `- ` or `* `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
-- **▶ Implement** above each open step runs the agent on it (see [Work with Claude](#4-work-with-claude)).
+- **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first (see [Work with Claude](#4-work-with-claude)).
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and likely typos in `Type.member`, with a suggestion: `Debouncer.Pussh` → "Did you mean 'Push'?". A member that isn't close to a declared one, like an inherited `DbContext.Database`, doesn't warn.
 - **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked, and neither is `.llmd/archive/`, which describes the code as it was. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
@@ -172,12 +172,21 @@ A `-` line says how: you design it. A `*` line says what: Claude designs it. Mix
 
 ### Implement a step
 
-Click **▶ Implement** above any open step. It saves the spec and starts your agent on that step in a new terminal, at the project root. By default it runs `claude`. To use Codex, set **LLMD: Agent Command** in VS Code's settings to `codex`, or add flags, e.g. `codex --model gpt-5.5`.
+Click **▶ Implement** above any open step. It saves the spec and starts your agent on that step in an **LLMD: Implement** terminal, at the project root. The next click sends the next step to the same session if the agent is still running there, and starts it again if you've quit it. By default it runs `claude`. To use Codex, set **LLMD: Agent Command** in VS Code's settings to `codex`, or add flags, e.g. `codex --model gpt-5.5`.
+
+### Plan a step
+
+Click **Plan** to talk a step through before building it. The agent reads the step, the files and the code like it would before implementing. Then it discusses: what's unclear, what's missing, and what clashes with the code or your other specs. It suggests concrete spec edits, such as `?` lines, new lines or whole new steps, and makes them once you agree. It never writes code in plan mode.
+
+It runs in its own **LLMD: Plan** terminal, separate from Implement, because a session in plan mode can't start building just by being sent a prompt. By default it runs `claude --permission-mode plan`. Change it with **LLMD: Plan Command** in VS Code's settings.
+
+Both terminals need VS Code's shell integration, which is on by default for zsh, bash, fish and PowerShell. Without it, every click opens a new terminal as before.
 
 Or ask yourself in Claude Code or Codex, in the project folder:
 
 - `implement the next step` builds the first step without `[x]`, from the spec in `.llmd/`. With several specs there, name one: `implement the next step in .llmd/flow.llmd`.
 - `implement "More user interactions"` builds a step by name.
+- `plan "More user interactions"` talks it through without writing code.
 - `implement ReadUserInput` builds just one method of a step.
 
 ### Answer the questions

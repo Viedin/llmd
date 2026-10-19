@@ -89,6 +89,15 @@ lang: go
 14. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
 15. **Report back** with what you built, whether you ticked the step, and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
 
+## Planning a step
+
+"Plan the step" (or "plan the next step") means talk it through with the user before anything is built:
+
+1. **Read first**, exactly as for implementing: the whole spec, the step's files and references, and the other specs' step titles.
+2. **Discuss.** Raise everything at once: what's unclear or contradicts the code, what's missing (error cases, tests, files the step will have to touch), and what clashes with other specs. Answer the step's `?` lines with options, not just questions back.
+3. **Propose concrete spec edits:** `?` lines, new or changed lines, `~` lines, or whole new steps. Make them only once the user agrees.
+4. **Never write code** while planning. The step is built later, with "implement".
+
 ## Writing a spec from existing code
 
 When asked to describe code "as llmd":

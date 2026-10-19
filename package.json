@@ -6,7 +6,7 @@
   "publisher": "filip",
   "license": "UNLICENSED",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.93.0"
   },
   "main": "./out/extension.js",
   "bin": { "llmd": "out/cli.js" },
@@ -34,7 +34,8 @@
     },
     "commands": [
       { "command": "llmd.enter", "title": "LLMD: Enter" },
-      { "command": "llmd.implement", "title": "LLMD: Implement step" }
+      { "command": "llmd.implement", "title": "LLMD: Implement step" },
+      { "command": "llmd.plan", "title": "LLMD: Plan step" }
     ],
     "configuration": {
       "title": "LLMD",
@@ -43,13 +44,19 @@
           "type": "string",
           "default": "claude",
           "markdownDescription": "Command that starts your coding agent when you click **Implement** above a step. The step's prompt is added as one quoted argument. For example `claude`, `codex`, or `codex --model gpt-5.5`."
+        },
+        "llmd.planCommand": {
+          "type": "string",
+          "default": "claude --permission-mode plan",
+          "markdownDescription": "Command that starts your coding agent in a mode that discusses without editing, when you click **Plan** above a step. The step's prompt is added as one quoted argument."
         }
       }
     },
     "menus": {
       "commandPalette": [
         { "command": "llmd.enter", "when": "false" },
-        { "command": "llmd.implement", "when": "false" }
+        { "command": "llmd.implement", "when": "false" },
+        { "command": "llmd.plan", "when": "false" }
       ]
     },
     "keybindings": [
@@ -76,7 +83,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@types/vscode": "~1.80.0",
+    "@types/vscode": "~1.93.0",
     "@vscode/test-electron": "^3.1.0",
     "typescript": "^7.0.2"
   }
