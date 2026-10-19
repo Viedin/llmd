@@ -53,7 +53,7 @@ Build the extension and install it into your normal VS Code, then reload the win
 ```bash
 npm install
 npx @vscode/vsce package --no-rewrite-relative-links
-code --install-extension llmd-0.0.1.vsix --force
+code --install-extension llmd-0.0.2.vsix --force
 ```
 
 Link the skill and the CLI to this repo, so edits apply straight away (`npm run compile` after changing the CLI):
@@ -67,8 +67,8 @@ npm link
 To release the CLI, bump `version` in `package.json`, commit, then push a matching tag. The Release workflow builds `llmd.tgz` and attaches it to a GitHub release:
 
 ```bash
-git tag v0.0.1
-git push origin v0.0.1
+git tag "v$(node -p "require('./package.json').version")"
+git push origin --tags
 ```
 
 ## 2. Start a project
