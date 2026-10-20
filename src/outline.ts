@@ -84,3 +84,18 @@ export function openSteps(text: string): { title: string; line: number }[] {
   walk(parseOutline(text));
   return steps;
 }
+
+// The step titled `title`: its heading's line, whether it's ticked, and its lines down to the next # or ## heading.
+// Undefined once the step is gone, which after a run means it was folded into Current state.
+// ponytail: headings inside fenced code blocks count too; steps rarely hold fences
+export function stepSection(text: string, title: string): { line: number; done: boolean; lines: string[] } | undefined {
+  const lines = text.split(/\r?\n/);
+  const heading = /^##\s+(?:\[([ xX])\]\s*)?(.*?)\s*#*\s*$/;
+  const start = lines.findIndex((l) => heading.exec(l)?.[2] === title);
+  if (start < 0) return undefined;
+  let end = lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
+  if (end < 0) end = lines.length;
+  while (end > start + 1 && !lines[end - 1].trim()) end--;
+  const box = heading.exec(lines[start])![1];
+  return { line: start, done: !!box && box !== ' ', lines: lines.slice(start, end) };
+}

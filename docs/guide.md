@@ -4,13 +4,15 @@ Everything about writing `.llmd` specs and working with the agent on them. To in
 
 - [1. Start a project](#1-start-a-project)
 - [2. Write a spec](#2-write-a-spec): [steps](#steps), [one spec per feature](#one-spec-per-feature), [line types](#line-types), [example](#example), [`*` lines](#hand-decisions-to-the-agent), [`!` checks](#say-what-done-means), [editor help](#editor-help-while-you-write), [tips](#tips)
-- [3. Work with the agent](#3-work-with-the-agent): [implement](#implement-a-step), [plan](#plan-a-step), [questions](#answer-the-questions), [review](#review), [the snapshot](#the-snapshot), [commit](#commit), [change your mind](#change-your-mind), [existing code](#start-from-existing-code)
+- [3. Work with the agent](#3-work-with-the-agent): [runs](#runs), [implement](#implement-a-step), [plan](#plan-a-step), [questions](#answer-the-questions), [review](#review), [the snapshot](#the-snapshot), [commit](#commit), [change your mind](#change-your-mind), [existing code](#start-from-existing-code)
 - [Known limits](#known-limits)
 
 ## 1. Start a project
 
 1. Open the project **folder** in VS Code with File → Open Folder, so `@` completion lists your files.
 2. Create a spec per feature in a `.llmd/` folder at the project root, e.g. `.llmd/book.llmd` (see [One spec per feature](#one-spec-per-feature)). That's where the agent looks when you don't name a spec, and `@` paths in it still start from the project root.
+
+   In VS Code you don't need to make spec files yourself. **LLMD: New feature** in the command palette asks for a name and opens a fresh `## <name>` step to write in. It's a draft in `.llmd/drafts/`, a folder the extension hides from the Explorer, and it holds just that step. Once the step is built, **Accept** folds it into a feature's snapshot in `.llmd/snapshots/`, which the agent picks, and the draft is gone. **LLMD: Open feature** lists the drafts you're working on.
 3. Decide whether to commit the specs. Committed, they're a history of what you planned. To keep them to yourself, add `.llmd/` to the project's `.gitignore`, or to your global one (`~/.config/git/ignore`) to skip them in every repo, e.g. at work.
 4. Optionally, add this line to the project's `AGENTS.md`, so the agent keeps the spec in mind even when you don't mention it:
    ```
@@ -82,6 +84,7 @@ lang: csharp
 | `? use doubles or decimals` | An open question. The agent must ask you before building that step. | Highlighted. |
 | `- ~Stop()`, `~@Old.cs`, `- ~line` | A removal. The agent deletes that code, and folding the step removes it from the snapshot. | Nothing special. |
 | `// a note` | A note for context. The agent reads it but never treats it as a task. | Comment color. |
+| `snapshot: handler` | Right under a step's heading: the snapshot in `.llmd/snapshots/` the step folds into. The agent adds it when it builds the step; change it if you disagree. | Nothing special. |
 
 You can still put `[x]` on a single method (`- [x] Add(...)`) if you want to mark it done yourself, and it greys out. The agent doesn't add these, though: it only ticks steps.
 
@@ -159,7 +162,7 @@ A `!` line is a check: something that must be true once the step is built. Put i
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- `, `* ` or `! ` line, Enter starts a new one at the same level.
 - **Enter on an empty `- `, `* ` or `! `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
 - **Ctrl+click** opens `@` files and jumps to `Name.method` definitions.
-- **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first (see [Work with the agent](#3-work-with-the-agent)).
+- **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first, in the step's [run](#runs). **Run** goes back to a step's run.
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and likely typos in `Type.member`, with a suggestion: `Debouncer.Pussh` → "Did you mean 'Push'?". A member that isn't close to a declared one, like an inherited `DbContext.Database`, doesn't warn.
 - **Drift warnings** flag a type or method in a done step, usually `## [x] Current state`, that its file no longer has, e.g. `src/store.ts has no 'remove'`. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one aren't checked, and neither is `.llmd/archive/`, which describes the code as it was. Drift is checked when the spec opens and whenever you save any file; in between, a half-typed name doesn't warn.
@@ -174,17 +177,29 @@ A `!` line is a check: something that must be true once the step is built. Put i
 
 ## 3. Work with the agent
 
+### Runs
+
+The spec is where you write. When a step is ready, click **▶ Implement** or **Plan** above it, and the editor turns into the step's **run**, in the same spot:
+
+- **The step, live, on the left.** It looks like the editor it came from, with line numbers and colors, and it follows the spec as the agent edits it. Lines the agent added since the run started are green and lines it removed are struck through, so you see a `?` become `// decided:`, a `*` become real lines, and the step get its tick.
+- **The conversation on the right.** Claude's text, its tool calls as small lines like `Edit cmd/main.go` (long runs of them fold into "12 actions"), and anything it wasn't allowed to do in red. Answer its questions in the box at the bottom. Lines you've selected in the spec go along with your message.
+- **Allow** next to a refused command adds it to the project's `.claude/settings.local.json`, the way Claude Code's own "always allow" does, e.g. `Bash(go build *)`. **Continue with what you allowed** then tells Claude to run it again and carry on.
+- **The bar on top** says where the step is: Implementing, Planning, Waiting for you, Built, or Accepted. **Edit spec** flips back to the spec at that step, and **Run** above the step flips to the run again.
+- **✓ Accept** is there once Claude has had its turn. In a run, Claude doesn't fold the step: when it ticks it, it adds a `snapshot: <feature>` line naming the snapshot the step belongs to, or a new one, and you review the step and its changes first. Accept folds it into `.llmd/snapshots/<feature>.llmd` and takes it out of the draft. If Claude hadn't ticked it, say because a build was refused, Accept first asks it to make the step describe what it built, add the `snapshot:` line and tick it, without touching the code, and then folds it. **Accept** above a ticked step does the same.
+- **Changes** under the step: every file that changed since the step's run started, however it changed, with how many lines were added and removed. It comes from git and counts from the working tree as it was, so your uncommitted work from before doesn't show up as the step's. Click a file to unfold its highlighted diff. **Open** shows that file's changes in VS Code's diff editor and **Open all** shows them all in its multi-file one. Click **Changes** to fold the whole section. A run that started before the folder was a git repository counts from the last commit. Outside a git repository you only get the names of the files Claude edited.
+- **Once you click Accept**, the changes move into the conversation's place and become the main view, every file unfolded. A step that Claude or `llmd snapshot` folded on its own counts as accepted too. Above them, write a commit message or click **✨ Write with Claude**, then **Commit** (or Cmd/Ctrl+Enter). The commit takes only the step's files and its snapshot: not your other uncommitted work, the draft, or `.claude/settings.local.json`, which holds the commands you allowed. Above the finished step, **Next** lists the open steps, features in progress first, and **New feature**; click one to open its run.
+
+Each step is its own chat, like a migration: a fresh Claude session that knows the step, the spec and the code, not a long history. Plan and Implement of the same step share it. Once the step is accepted, the run is history, and the snapshot carries what was built. Runs come back after you restart VS Code.
+
+Claude runs headless, with `claude -p`, at the project root. **LLMD: Agent Command** in VS Code's settings is the command it starts, `claude --permission-mode auto` by default: Claude runs what's safe, like builds and tests, without asking. Nobody can answer a permission prompt in a headless run, so anything it would ask about is refused and shows as **Not allowed**, with **Allow** next to it. If `auto` isn't available on your plan, use `claude --permission-mode acceptEdits`: Claude may then edit files, and you allow each command once. Runs only work with Claude Code for now.
+
 ### Implement a step
 
-Click **▶ Implement** above any open step. It saves the spec and starts your agent on that step in an **LLMD: Implement** terminal, at the project root. The next click sends the next step to the same session if the agent is still running there, and starts it again if you've quit it. By default it runs `claude`. To use Codex, set **LLMD: Agent Command** in VS Code's settings to `codex`, or add flags, e.g. `codex --model gpt-5.5`.
+Click **▶ Implement** above an open step. It saves the spec and opens the step's [run](#runs), where the agent builds it. Answer its questions there.
 
 ### Plan a step
 
-Click **Plan** to talk a step through before building it. The agent reads the step, the files and the code like it would before implementing. Then it discusses: what's unclear, what's missing, and what clashes with the code or your other specs. It suggests concrete spec edits, such as `?` lines, new lines or whole new steps, and makes them once you agree. It never writes code in plan mode.
-
-It runs in its own **LLMD: Plan** terminal, separate from Implement, because a session in plan mode can't start building just by being sent a prompt. By default it runs `claude --permission-mode plan`. Change it with **LLMD: Plan Command** in VS Code's settings. For Codex, use `codex --sandbox read-only --ask-for-approval on-request`: it can read and discuss, and asks before it writes the spec edits you agreed on.
-
-Both terminals need VS Code's shell integration, which is on by default for zsh, bash, fish and PowerShell. Without it, every click opens a new terminal as before.
+Click **Plan** to talk a step through before building it. The agent reads the step, the files and the code like it would before implementing. Then it discusses: what's unclear, what's missing, and what clashes with the code or your other specs. It suggests concrete spec edits, such as `?` lines, new lines or whole new steps, and makes them once you agree. It doesn't write code while planning. Planning and implementing share the step's run, so when you're done talking, click **▶ Implement** in its bar.
 
 Or ask yourself in Claude Code or Codex, in the project folder:
 
@@ -222,6 +237,8 @@ The agent only changes your spec in those six ways on its own: ticking the step,
 ### The snapshot
 
 Like EF Core migrations: each step is a small change, and `## [x] Current state` is the snapshot of everything built so far. `llmd snapshot [spec]` merges every done step into it, removes the step from the spec and appends it to `.llmd/archive/<spec>.llmd`. So the spec stays short: the current architecture, then the open steps.
+
+A done step with a `snapshot: <feature>` line goes to `.llmd/snapshots/<feature>.llmd` instead: one file per feature holding just its Current state, made when the first step for it arrives. That's where Accept in VS Code puts it too. Nothing is archived then; git keeps the step's text. Without a spec name, `llmd snapshot` also folds the drafts in `.llmd/drafts/`, and deletes a draft once it has no steps left.
 
 The merge is plain text, with no AI involved:
 

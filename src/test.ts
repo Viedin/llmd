@@ -1,8 +1,8 @@
 import * as assert from 'assert';
-import { agentCommand, stepPrompt } from './agent';
-import { OutlineNode, openSteps, parseOutline } from './outline';
+import { agentArgs, allowRules, render, stepPrompt } from './agent';
+import { OutlineNode, openSteps, parseOutline, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
-import { fold } from './snapshot';
+import { fold, foldInto, snapshotName, takeNamed } from './snapshot';
 import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
 
 const text = [
@@ -100,12 +100,30 @@ const prompt = stepPrompt('implement', step, '.llmd/a.llmd');
 assert.strictEqual(prompt, `implement the step "Don't spend $HOME" in .llmd/a.llmd`);
 assert.ok(stepPrompt('plan', 'Export', 'a.llmd').startsWith('plan the step "Export" in a.llmd') &&
   stepPrompt('plan', 'Export', 'a.llmd').includes("Don't write any code"));
-assert.strictEqual(agentCommand('codex', prompt, '/bin/zsh'),
-  `codex 'implement the step "Don'\\''t spend $HOME" in .llmd/a.llmd'`);
-assert.strictEqual(agentCommand('claude', prompt, 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
-  `claude 'implement the step "Don''t spend $HOME" in .llmd/a.llmd'`);
-assert.strictEqual(agentCommand('claude', prompt, 'C:\\Windows\\System32\\cmd.exe'),
-  `claude "implement the step 'Don't spend $HOME' in .llmd/a.llmd"`);
+// A headless run takes the prompt last, after "--", and resumes the step's session when it has one.
+assert.deepStrictEqual(agentArgs('-x'), ['-p', '--output-format', 'stream-json', '--verbose', '--', '-x']);
+assert.deepStrictEqual(agentArgs(prompt, 'abc').slice(4), ['--resume', 'abc', '--', prompt]);
+
+// Events shaped like claude's stream-json output: only text, tool calls, denials and errors are shown.
+const root = '/code/app';
+const stream = [
+  { type: 'system', subtype: 'init', session_id: 's1' },
+  { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'hmm' }] } },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: '/code/app/cmd/main.go' } }] } },
+  { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'go build ./...\necho done' } }, { type: 'text', text: 'Built **it**.' }] } },
+  { type: 'result', subtype: 'success', session_id: 's1', permission_denials: [{ tool_name: 'Bash', tool_input: { command: 'go test ./...' } }] },
+  { type: 'result', subtype: 'error_during_execution', is_error: true, permission_denials: [], errors: ['No conversation found'] },
+];
+assert.deepStrictEqual(stream.map((e) => render(e, root)), [
+  [],
+  [],
+  [{ kind: 'tool', text: 'Edit cmd/main.go', file: '/code/app/cmd/main.go' }],
+  [],
+  [{ kind: 'tool', text: 'Bash go build ./...' }, { kind: 'text', text: 'Built **it**.' }],
+  [{ kind: 'error', text: 'Not allowed: Bash go test ./...', allow: ['Bash(go test *)'] }],
+  [{ kind: 'error', text: 'No conversation found' }],
+]);
 
 const models = [
   'lang: go', //                 0
@@ -239,4 +257,31 @@ assert.strictEqual(closest('cs', ['GetBook', 'GetBooks']), undefined, 'a file ex
 assert.strictEqual(closest('Pul', ['Push']), undefined, 'short names allow one edit only');
 assert.strictEqual(closest('Pus', ['Push']), 'Push');
 
+
+// A refused command becomes one rule per command in it, in the format Claude Code writes itself.
+assert.deepStrictEqual(allowRules('Bash', { command: 'go build ./... && (go run ./cmd/app -addr :8080 & sleep 1) | grep ok' }),
+  ['Bash(go build *)', 'Bash(go run *)', 'Bash(sleep *)', 'Bash(grep *)']);
+assert.deepStrictEqual(allowRules('Bash', { command: 'ls -R . | grep -v node_modules' }), ['Bash(ls *)', 'Bash(grep *)']);
+assert.deepStrictEqual(allowRules('WebFetch', { url: 'https://x.dev' }), ['WebFetch']);
+
+// A step's section: from its heading down to the next step, without trailing blank lines.
+const sections = '# Spec\n## [x] Current state\n@a.go\n\n## Export\n@b.go\n  - Save()\n\n\n## [x] Done one\n- x\n';
+assert.deepStrictEqual(stepSection(sections, 'Export'), { line: 4, done: false, lines: ['## Export', '@b.go', '  - Save()'] });
+assert.deepStrictEqual(stepSection(sections, 'Done one'), { line: 9, done: true, lines: ['## [x] Done one', '- x'] });
+assert.strictEqual(stepSection(sections, 'Folded away'), undefined);
+// Accepting a step folds it into the snapshot it names, or into a new one.
+const accepted = ['## [x] Export', 'snapshot: handler', '@cmd/handler.go', '  - getExport(w, r)', '    - write CSV', '// decided: all records'];
+assert.strictEqual(snapshotName(accepted), 'handler');
+assert.strictEqual(snapshotName(['## Export', '@a.go']), undefined);
+const created = foldInto(undefined, accepted, 'handler', 'lang: go');
+assert.ok(created.startsWith('# handler\nlang: go\n\n## [x] Current state'), created);
+assert.ok(created.includes('@cmd/handler.go\n  - getExport(w, r)\n    - write CSV') && created.includes('// decided: all records'), created);
+assert.ok(!created.includes('## [x] Export') && !created.includes('snapshot: handler'), 'the step and its snapshot: line are folded away');
+// A done step that names its snapshot leaves the spec; one that doesn't, and open steps, stay for the usual fold.
+const draft = 'lang: go\n\n## [x] Export\nsnapshot: handler\n@a.go\n\n## [x] Old style\n@b.go\n\n## Next\n';
+const taken = takeNamed(draft);
+assert.deepStrictEqual(taken.steps, [{ name: 'handler', lines: ['## [x] Export', 'snapshot: handler', '@a.go'] }]);
+assert.strictEqual(taken.text, 'lang: go\n\n## [x] Old style\n@b.go\n\n## Next\n');
+const merged = foldInto('# handler\n\n## [x] Current state\n\n@cmd/handler.go\n  - getIndex()\n', ['## Export', '@cmd/handler.go', '  - getExport(w, r)'], 'handler');
+assert.ok(merged.includes('  - getIndex()\n  - getExport(w, r)'), merged);
 console.log('ok');

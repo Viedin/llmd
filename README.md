@@ -30,7 +30,7 @@ lang: csharp
 
 LLMD has three parts:
 
-- **A VS Code extension** that makes `.llmd` a real language: highlighting, `@` file completion, an outline, Ctrl+click, warnings for broken references, and **▶ Implement** / **Plan** buttons above each step.
+- **A VS Code extension** that makes `.llmd` a real language: highlighting, `@` file completion, an outline, Ctrl+click, warnings for broken references, and **▶ Implement** / **Plan** buttons above each step. **▶ Implement** turns the editor into the step's run: the step stays live on one side while the agent builds it, and you talk to it on the other.
 - **An agent skill** that teaches Claude Code, Codex and other agents what the syntax means and how to implement a step.
 - **A CLI**, `llmd snapshot`, that folds finished steps into `## [x] Current state`, so the spec stays a short map of the code.
 
@@ -79,9 +79,9 @@ npm install -g https://github.com/viedin/llmd/releases/latest/download/llmd.tgz
 ## Quick start
 
 1. Open your project **folder** in VS Code.
-2. Create `.llmd/app.llmd` with a title, a `lang:` line and a first `## step`. Already have code? Ask the agent to `describe @src as llmd` instead, and it writes the specs for you.
+2. Run **LLMD: New feature** and write its `## step`, or create `.llmd/app.llmd` with a title, a `lang:` line and a first `## step`. Already have code? Ask the agent to `describe @src as llmd` instead, and it writes the specs for you.
 3. Click **▶ Implement** above the step, or tell your agent `implement the next step`.
-4. Answer its questions, review the diff, and let it tick the step.
+4. Answer its questions, review the diff, and once it has ticked the step, **✓ Accept** it into its snapshot.
 
 The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md) covers each of these in depth: [starting a project](https://github.com/Viedin/llmd/blob/main/docs/guide.md#1-start-a-project), [every line type](https://github.com/Viedin/llmd/blob/main/docs/guide.md#line-types), [handing decisions to the agent](https://github.com/Viedin/llmd/blob/main/docs/guide.md#hand-decisions-to-the-agent), [reviewing a step](https://github.com/Viedin/llmd/blob/main/docs/guide.md#review) and [the snapshot](https://github.com/Viedin/llmd/blob/main/docs/guide.md#the-snapshot).
 

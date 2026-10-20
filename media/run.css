@@ -1,0 +1,200 @@
+/* A step's run: the live step on the left, the conversation on the right, in VS Code's own theme colors. */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
+  transition: grid-template-columns 0.45s ease;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+}
+body.running { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+body.writing #chat { opacity: 0; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+/* The bar: where you are, how far the step is, and what you can do next */
+#bar {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 14px;
+  border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--vscode-panel-border));
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+}
+.crumb, .sep { color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 12px; white-space: nowrap; }
+h1 { margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grow { flex: 1; }
+.status { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 10px; font-size: 11px; white-space: nowrap; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.pip { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.status.busy .pip { background: var(--vscode-progressBar-background); animation: pulse 0.8s infinite alternate; }
+.status.wait .pip { background: var(--vscode-editorWarning-foreground); }
+.status.done .pip { background: var(--vscode-charts-green); }
+#bar button { padding: 3px 10px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#bar button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+#bar button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#bar button.primary:hover { background: var(--vscode-button-hoverBackground); }
+
+/* The live step, drawn like the editor it came from */
+#step { overflow: auto; padding: 10px 0 24px; border-right: 1px solid var(--vscode-editorGroup-border, var(--vscode-panel-border)); }
+.code { tab-size: 4; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size, 12px); line-height: 1.6; }
+.row { display: grid; grid-template-columns: 3.2em 1.4em 1fr; }
+.num { padding-right: 10px; text-align: right; color: var(--vscode-editorLineNumber-foreground); user-select: none; }
+.mark { color: var(--vscode-descriptionForeground); user-select: none; }
+.row.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(46, 160, 67, 0.15)); }
+.row.add .mark { color: var(--vscode-charts-green); }
+.row.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(248, 81, 73, 0.12)); }
+.row.del .l { text-decoration: line-through; opacity: 0.65; }
+.row.del .mark { color: var(--vscode-errorForeground); }
+.l { min-height: 1.6em; padding-right: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.folded { opacity: 0.6; }
+.note { margin: 12px 14px 0 4.6em; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.l.k-unit, .ref { color: var(--vscode-textLink-foreground); }
+.l.k-type { color: var(--vscode-symbolIcon-classForeground); }
+.method { color: var(--vscode-symbolIcon-methodForeground); }
+.l.k-question { color: var(--vscode-editorWarning-foreground); }
+.l.k-check { color: var(--vscode-charts-green); }
+.l.k-free { font-style: italic; }
+.l.k-comment { color: var(--vscode-descriptionForeground); }
+.l.k-heading { font-weight: 600; }
+.l.k-removed { opacity: 0.6; text-decoration: line-through; }
+.tick { color: var(--vscode-charts-green); }
+.changes { margin: 18px 14px 0 1.2em; }
+.changes h2, .changes > summary {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--vscode-descriptionForeground); cursor: pointer; list-style: none;
+}
+.changes > summary::-webkit-details-marker { display: none; }
+.changes > summary .link { text-transform: none; letter-spacing: 0; font-weight: normal; }
+.changes > summary .link:hover { color: var(--vscode-textLink-foreground); }
+.hint { margin: 0 0 8px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.file {
+  margin: 0 6px 6px 0; padding: 2px 9px; border-radius: 6px; font-family: var(--vscode-editor-font-family); font-size: 12px;
+  background: var(--vscode-textCodeBlock-background); color: var(--vscode-textLink-foreground);
+}
+.file:hover { text-decoration: underline; }
+.stat { font-family: var(--vscode-editor-font-family); font-size: 11px; font-weight: normal; letter-spacing: 0; }
+.plus { color: var(--vscode-charts-green); }
+.minus { color: var(--vscode-errorForeground); }
+details.diff { margin-bottom: 4px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; overflow: hidden; }
+details.diff summary {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; list-style: none;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  font-family: var(--vscode-editor-font-family); font-size: 12px;
+}
+details.diff summary::-webkit-details-marker { display: none; }
+details.diff summary:hover { background: var(--vscode-list-hoverBackground); }
+.chev { display: inline-block; width: 10px; color: var(--vscode-descriptionForeground); transition: transform 0.15s ease; }
+details[open] > summary .chev { transform: rotate(90deg); }
+details.diff .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dlines { tab-size: 4; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size, 12px); line-height: 1.5; overflow-x: auto; border-top: 1px solid var(--vscode-panel-border); }
+.drow { display: grid; grid-template-columns: 3.2em 3.2em 1fr; min-width: max-content; }
+.drow > span:nth-child(-n+2) { padding-right: 8px; text-align: right; color: var(--vscode-editorLineNumber-foreground); user-select: none; }
+.drow > span:last-child { padding-right: 14px; white-space: pre; }
+.drow.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(46, 160, 67, 0.15)); }
+.drow.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(248, 81, 73, 0.12)); }
+.drow.hunk { color: var(--vscode-descriptionForeground); background: var(--vscode-textCodeBlock-background); font-style: italic; }
+
+/* The conversation */
+#chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; transition: opacity 0.3s ease 0.15s; }
+#log { flex: 1; overflow-y: auto; padding: 18px 0 8px; }
+.msg, .empty, .working { max-width: 720px; margin: 0 auto 16px; padding: 0 22px; }
+.msg.you { display: flex; justify-content: flex-end; }
+.msg.you .part { max-width: 85%; padding: 7px 13px; border-radius: 14px; background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); }
+.msg.you p { margin: 0; }
+.part.text { line-height: 1.6; overflow-wrap: anywhere; }
+.part.text :first-child { margin-top: 0; }
+.part.text :last-child { margin-bottom: 0; }
+.part.text pre { padding: 10px 12px; border-radius: 8px; overflow-x: auto; background: var(--vscode-textCodeBlock-background); }
+.part.text code { font-family: var(--vscode-editor-font-family); font-size: 0.92em; }
+.part.text :not(pre) > code { padding: 1px 4px; border-radius: 4px; background: var(--vscode-textCodeBlock-background); }
+.part.text a { color: var(--vscode-textLink-foreground); }
+.part.tool, .tools summary {
+  margin: 3px 0; font-family: var(--vscode-editor-font-family); font-size: 12px;
+  color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.part.tool::before, .tools summary::before { content: '●'; margin-right: 8px; font-size: 8px; vertical-align: 2px; color: var(--vscode-charts-green); }
+.tools { margin: 6px 0; }
+.tools summary { cursor: pointer; list-style: none; }
+.tools summary::-webkit-details-marker { display: none; }
+.tools summary span { opacity: 0.75; }
+.tools .part.tool { padding-left: 16px; }
+.part.error { margin: 6px 0; font-size: 12px; color: var(--vscode-errorForeground); }
+.allow, .continue {
+  margin-left: 8px; padding: 1px 8px; border-radius: 5px; font-size: 11px;
+  background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+}
+.allow:hover, .continue:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.continue { margin: 8px 0 0; padding: 4px 12px; font-size: 12px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.continue:hover { background: var(--vscode-button-hoverBackground); }
+.allowed { margin-left: 8px; font-size: 11px; color: var(--vscode-charts-green); }
+.part + .part.text { margin-top: 10px; }
+.empty { margin-top: 14vh; text-align: center; color: var(--vscode-descriptionForeground); line-height: 1.6; }
+.working span { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--vscode-descriptionForeground); animation: pulse 0.8s infinite alternate; }
+.working span:nth-child(2) { animation-delay: 0.2s; }
+.working span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulse { from { opacity: 0.25; } to { opacity: 1; } }
+
+#composer {
+  display: flex; align-items: flex-end; gap: 8px; width: calc(100% - 44px); max-width: 676px; margin: 0 auto 16px;
+  padding: 7px 7px 7px 13px; border-radius: 16px;
+  background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+}
+#composer:focus-within { border-color: var(--vscode-focusBorder); }
+#input { flex: 1; max-height: 200px; padding: 5px 0; resize: none; border: 0; outline: 0; background: transparent; color: var(--vscode-input-foreground); font: inherit; line-height: 1.5; }
+#input::placeholder { color: var(--vscode-input-placeholderForeground); }
+#send { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#send:hover { background: var(--vscode-button-hoverBackground); }
+#send.stop { font-size: 10px; }
+
+/* An accepted step: its changes take the conversation's place, with the commit and what's next */
+#review { display: none; overflow: auto; padding: 16px 22px 24px; }
+body.reviewing { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); transition: none; }
+body.reviewing #chat { display: none; }
+body.reviewing #review { display: block; }
+#review .changes { margin: 0; }
+/* Accept, choreographed: the conversation slides away, the changes lift out of the step's column and open up as the main
+   view, then the commit box and Next rise in. The browser's view transitions do the moving. */
+.changes { view-transition-name: changes; }
+#step .code { view-transition-name: step; }
+#chat { view-transition-name: chat; }
+#commit { view-transition-name: commit; }
+.nextup { view-transition-name: nextup; }
+::view-transition-group(*) { animation-duration: 0.7s; animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1); }
+::view-transition-old(chat) { animation: 0.45s ease-in-out both chat-out; }
+::view-transition-group(changes) { overflow: clip; border-radius: 8px; animation-duration: 0.8s; }
+::view-transition-old(changes), ::view-transition-new(changes) { height: auto; object-fit: none; object-position: left top; }
+::view-transition-new(changes) { animation: 0.45s 0.1s ease-in-out both fade-in; }
+::view-transition-new(commit), ::view-transition-new(nextup) { animation: 0.5s 0.45s ease-out both rise; }
+@keyframes chat-out { to { opacity: 0; transform: translateX(48px); } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }
+#commit { margin-bottom: 14px; padding: 8px; border-radius: 10px; background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); }
+#commit:focus-within { border-color: var(--vscode-focusBorder); }
+#commit[hidden] { display: none; }
+#message { width: 100%; padding: 2px 4px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--vscode-input-foreground); font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.5; }
+#message::placeholder { color: var(--vscode-input-placeholderForeground); }
+#commit .actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+#commit button { padding: 3px 10px; border-radius: 6px; font-size: 12px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#commit button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+#commit button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#commit button.primary:hover { background: var(--vscode-button-hoverBackground); }
+#commit button:disabled { opacity: 0.6; cursor: default; }
+#committed:empty { display: none; }
+#committed { margin: 0 0 14px; font-size: 12px; }
+#committed code { font-family: var(--vscode-editor-font-family); }
+.nextup { margin: 4px 14px 16px 1.2em; padding-bottom: 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+.nextup h2 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vscode-descriptionForeground); }
+.next { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px; border-radius: 6px; text-align: left; }
+.next:hover { background: var(--vscode-list-hoverBackground); }
+.next > span:first-child { width: 12px; color: var(--vscode-textLink-foreground); }
+.next .where { margin-left: auto; font-size: 11px; color: var(--vscode-descriptionForeground); }
+
+/* Narrow tabs: the step on top, the conversation under it */
+@media (max-width: 760px) {
+  body, body.running, body.reviewing { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  #step { max-height: 38vh; border-right: 0; border-bottom: 1px solid var(--vscode-panel-border); }
+  .crumb, .sep { display: none; }
+}

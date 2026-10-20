@@ -105,3 +105,42 @@ export function fold(text: string): { text: string; folded: string[] } {
   });
   return { text: out.flat().join(eol), folded };
 }
+
+// The snapshot a done step names on its "snapshot: <feature>" line, the feature it belongs to. The agent picks it.
+export function snapshotName(step: string[]): string | undefined {
+  for (const line of step) {
+    const m = line.match(/^snapshot:\s*([\w.-]+)\s*$/);
+    if (m) return m[1].replace(/\.llmd$/, '');
+  }
+}
+
+// One accepted step folded into a feature's snapshot. A new snapshot starts with a title, the lang: line and an empty
+// Current state. The step counts as done whatever its box says, since accepting it is what makes it done.
+export function foldInto(snapshot: string | undefined, step: string[], title: string, lang?: string): string {
+  const base = snapshot?.trim() ? snapshot : `# ${title}\n${lang ? lang + '\n' : ''}\n## [x] ${CURRENT}\n`;
+  const ticked = [step[0].replace(/^##\s+(\[[ xX]\]\s*)?/, '## [x] '), ...step.slice(1)];
+  return fold(base.trimEnd() + '\n\n' + ticked.join('\n').trim() + '\n').text;
+}
+
+// Done steps that name their snapshot, taken out of the spec: they fold into .llmd/snapshots/<name>.llmd, not into the spec.
+export function takeNamed(text: string): { text: string; steps: { name: string; lines: string[] }[] } {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const starts: number[] = [];
+  let inFence = false;
+  lines.forEach((l, i) => {
+    if (FENCE.test(l)) inFence = !inFence;
+    else if (!inFence && /^#{1,2}\s/.test(l)) starts.push(i);
+  });
+  const sections = [0, ...starts.filter((s) => s > 0)].map((s, i, all) => lines.slice(s, all[i + 1] ?? lines.length));
+  const steps: { name: string; lines: string[] }[] = [];
+  const kept = sections.filter((s) => {
+    const title = s[0].match(DONE_STEP)?.[1];
+    const name = title !== undefined && title !== CURRENT ? snapshotName(s) : undefined;
+    let end = s.length;
+    while (end > 1 && !s[end - 1].trim()) end--;
+    if (name) steps.push({ name, lines: s.slice(0, end) });
+    return !name;
+  });
+  return steps.length ? { text: kept.flat().join(eol), steps } : { text, steps };
+}

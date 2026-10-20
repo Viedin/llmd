@@ -17,6 +17,17 @@ There's **one spec per feature**, a vertical slice: `.llmd/book.llmd` holds ever
 - A step goes in the spec of the feature it's for, even when it touches another feature's files. A loan step that adds `IsAvailable` to `Book.cs` lives in `loan.llmd`.
 - When the user doesn't name a spec: if there's one, use it. If there are several, use the one the request points to ("the next book step"), else ask which one.
 
+### Drafts and snapshots
+
+The editor can keep the work in two folders inside `.llmd/` instead:
+
+- **`.llmd/snapshots/<feature>.llmd`**: one per feature, each holding just that feature's `## [x] Current state`. Together they're the architecture as built.
+- **`.llmd/drafts/<name>.llmd`**: new work. A draft holds one `##` step, the new feature, with no Current state of its own. The editor hides this folder.
+
+A step in a draft follows the same rules. Its context is the snapshots: find the ones that list the step's files, e.g. `grep -l 'cmd/handler.go' .llmd/snapshots/*.llmd`, and read those in full.
+
+**You pick the step's snapshot.** Before ticking, add a `snapshot: <feature>` line right under the step's heading. Name the snapshot whose Current state this step extends, the one that lists most of the files it touched. When the step starts a feature that no snapshot covers, give a new short name, like `snapshot: export`. The fold moves the step there.
+
 ## Syntax
 
 Indent with 2 spaces. Each level belongs to the line above it.
@@ -43,6 +54,7 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `? question` | An open question. It blocks the step it sits in. |
 | `- ~Name()`, `~@old.go`, `- ~line` | A removal: once the step is folded, the matching method, unit or logic line leaves the snapshot. A rename is a `~` of the old name plus the new one. Build it by deleting that code. |
 | `// note` | A note from the user. Context only, never a task. |
+| `snapshot: handler` | Right under a step's heading: the snapshot in `.llmd/snapshots/` the step folds into. You add it before ticking. |
 
 Anything above the first `##` step (the title, `lang:`, notes) is context for every step. The same file can appear in several steps: each step says what that step changes in it.
 
@@ -92,9 +104,9 @@ lang: go
 10. **Make the step true before ticking.** Once folded, the spec must describe the code exactly as it is. Compare the step with `## [x] Current state`: for every line there that your code changed or removed, add a `~` line for it in the step (a changed logic line is a `~` of the old line plus the new one). A line with parentheses is read as a method, so write a record's or class's data as fields (`- Id: int`), not as `- record(Id, Name)`.
 11. **Verify every `!` line in the step.** Write a test for it when the project has tests, otherwise check it by running the code or reading it closely. If a check fails and you can't make it pass within the step, don't tick: report which check fails and why.
 12. **Tick the step** (`## Title` or `## [ ] Title` → `## [x] Title`) only when all of it is built and the code builds (and its tests and `!` checks pass). Don't add `[x]` to methods.
-13. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. It merges the step into `## [x] Current state`, removes it from the spec and appends it to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand.
+13. **Fold it into the snapshot.** Right after ticking, run `llmd snapshot <spec>`. A step with a `snapshot:` line merges into that snapshot in `.llmd/snapshots/` and leaves the spec; a draft with no steps left is deleted. Any other step merges into its spec's own `## [x] Current state` and is appended to `.llmd/archive/`. If `llmd` isn't installed, say so and leave the step ticked; don't fold by hand. **When the prompt says the user accepts the step, don't fold**: stop after ticking and report, and they fold it from the editor.
 14. **Offer a commit.** In a git repo, once the step is folded, offer to commit it with the step's title as the commit message. Commit only if the user says yes.
-15. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
+15. **Never change the spec silently.** Besides ticking the step, `+` → `@`, `// decided:`, replacing `*` lines, adding `~` lines, the `snapshot:` line and `llmd snapshot`, propose spec edits to the user instead of making them. If the code you find contradicts the spec, stop and say so.
 16. **Report back** with what you built, whether you ticked the step, each `!` check and how you verified it (which test, or what you ran), and any questions that are still open. For `*` lines, list the decisions you made and the files you chose, so the user can review the design along with the diff.
 
 ## Planning a step

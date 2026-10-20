@@ -1,17 +1,9 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { agentCommand, stepPrompt } from './agent';
 import { OutlineNode, openSteps, parseOutline } from './outline';
-import { findRefs, projectOf } from './refs';
+import { hasRun, initRuns, onDidChangeRuns, rootOf, runKey, runs, runStep } from './run';
+import { findRefs } from './refs';
 import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
-
-// @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
-function rootOf(doc: vscode.TextDocument): vscode.Uri {
-  const project = projectOf(doc.uri.fsPath);
-  if (project) return vscode.Uri.file(project);
-  const ws = vscode.workspace.getWorkspaceFolder(doc.uri);
-  return ws ? ws.uri : vscode.Uri.file(path.dirname(doc.uri.fsPath));
-}
 
 async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
   try {
@@ -22,7 +14,7 @@ async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
 }
 
 async function scan(doc: vscode.TextDocument) {
-  const root = rootOf(doc);
+  const root = rootOf(doc.uri);
   const links: vscode.DocumentLink[] = [];
   const problems: vscode.Diagnostic[] = [];
   for (const ref of findRefs(doc.getText())) {
@@ -48,7 +40,7 @@ export function toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument): vscod
     const line = doc.lineAt(n.line);
     const name = line.range.with(line.range.start.translate(0, line.firstNonWhitespaceCharacterIndex));
     const range = new vscode.Range(name.start, doc.lineAt(n.endLine).range.end);
-    const symbol = new vscode.DocumentSymbol(n.name, n.detail, SYMBOL_KIND[n.kind], range, name);
+    const symbol = new vscode.DocumentSymbol(n.name || '…', n.detail, SYMBOL_KIND[n.kind], range, name); // "## " while you type
     symbol.children = toSymbols(n.children, doc);
     return symbol;
   });
@@ -173,7 +165,7 @@ const driftProblem = (doc: vscode.TextDocument, c: Claim) => {
 
 // Types and methods that done steps declare but the code no longer has.
 export async function driftProblems(doc: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
-  const root = rootOf(doc);
+  const root = rootOf(doc.uri);
   const files = new Map<string, Promise<Set<string> | undefined>>();
   const problems: vscode.Diagnostic[] = [];
   for (const c of claims(parseOutline(doc.getText()))) {
@@ -234,47 +226,11 @@ async function enter(editor: vscode.TextEditor) {
   await vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
 }
 
-type Mode = 'implement' | 'plan';
-const agentTerminals = new Map<string, vscode.Terminal>(); // "<mode> <project root>" → the terminal its agent runs in
-const busy = new Set<vscode.Terminal>(); // terminals running a command, from shell integration
-
-// Hands one step of the saved spec to the agent for that mode: the session already running if there is one,
-// else a new one in its terminal at the project root.
-async function runAgent(mode: Mode, uri: vscode.Uri, step: string) {
-  const doc = await vscode.workspace.openTextDocument(uri);
-  if (doc.isUntitled) return vscode.window.showWarningMessage('Save the spec first, so the agent can read it.');
-  await doc.save();
-  const root = rootOf(doc);
-  const file = path.relative(root.fsPath, doc.uri.fsPath).split(path.sep).join('/');
-  const prompt = stepPrompt(mode, step, file);
-  const key = `${mode} ${root.toString()}`;
-
-  let terminal = agentTerminals.get(key);
-  // Without shell integration there's no telling whether the agent still runs, so a new terminal is the safe choice.
-  if (terminal && !terminal.shellIntegration) terminal = undefined;
-  if (terminal && busy.has(terminal)) {
-    terminal.show();
-    // ponytail: the pause keeps Enter apart from the text, so the agent doesn't read it as part of a paste
-    terminal.sendText(prompt, false);
-    await new Promise((r) => setTimeout(r, 150));
-    terminal.sendText('\r', false);
-    return;
-  }
-  if (!terminal) {
-    terminal = vscode.window.createTerminal({ name: mode === 'plan' ? 'LLMD: Plan' : 'LLMD: Implement', cwd: root });
-    agentTerminals.set(key, terminal);
-  }
-  terminal.show();
-  const settings = vscode.workspace.getConfiguration('llmd');
-  const command = mode === 'plan'
-    ? settings.get<string>('planCommand') || 'claude --permission-mode plan'
-    : settings.get<string>('agentCommand') || 'claude';
-  terminal.sendText(agentCommand(command, prompt, vscode.env.shell));
-}
-
 export function activate(context: vscode.ExtensionContext) {
   const selector: vscode.DocumentSelector = { language: 'llmd' };
   const diagnostics = vscode.languages.createDiagnosticCollection('llmd');
+
+  initRuns(context);
 
   // Drift is worked out on open and on save. In between, its warnings follow their lines but nothing new is flagged,
   // so a half-typed name in Current state doesn't warn.
@@ -323,22 +279,35 @@ export function activate(context: vscode.ExtensionContext) {
       return editor ? enter(editor) : vscode.commands.executeCommand('type', { source: 'keyboard', text: '\n' });
     }),
 
-    vscode.commands.registerCommand('llmd.implement', (uri: vscode.Uri, step: string) => runAgent('implement', uri, step)),
-    vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runAgent('plan', uri, step)),
-    vscode.window.onDidStartTerminalShellExecution((e) => busy.add(e.terminal)),
-    vscode.window.onDidEndTerminalShellExecution((e) => busy.delete(e.terminal)),
-    vscode.window.onDidCloseTerminal((t) => {
-      busy.delete(t);
-      for (const [key, terminal] of agentTerminals) if (terminal === t) agentTerminals.delete(key);
-    }),
+    vscode.commands.registerCommand('llmd.implement', (uri: vscode.Uri, step: string) => runStep('implement', uri, step)),
+    vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runStep('plan', uri, step)),
     vscode.languages.registerCodeLensProvider(selector, {
-      provideCodeLenses: (doc) => openSteps(doc.getText()).flatMap((s) => {
-        const range = doc.lineAt(s.line).range;
-        return [
-          new vscode.CodeLens(range, { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] }),
-          new vscode.CodeLens(range, { title: '$(comment-discussion) Plan', tooltip: 'Talk this step through with the agent in plan mode, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
-        ];
-      }),
+      onDidChangeCodeLenses: onDidChangeRuns,
+      provideCodeLenses: (doc) => {
+        const lenses = openSteps(doc.getText()).flatMap((s) => {
+          const range = doc.lineAt(s.line).range;
+          return [
+            new vscode.CodeLens(range, { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] }),
+            new vscode.CodeLens(range, { title: '$(lightbulb) Plan', tooltip: 'Talk this step through with the agent, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
+          ];
+        });
+        // A built step waits for you: Accept folds it into its snapshot.
+        doc.getText().split(/\r?\n/).forEach((line, i) => {
+          const done = line.match(/^##\s+\[[xX]\]\s*(.*?)\s*$/);
+          if (!done || done[1] === 'Current state') return;
+          lenses.push(new vscode.CodeLens(doc.lineAt(i).range, { title: '$(check) Accept', tooltip: 'Fold this step into its snapshot', command: 'llmd.accept', arguments: [doc.uri, done[1]] }));
+        });
+        // A step that has a run gets a way back to it, which says when the agent is still working there.
+        for (const lens of [...lenses]) {
+          const step = lens.command!.arguments![1] as string;
+          if (lens.command!.command === 'llmd.plan' || lens.command!.command === 'llmd.accept') {
+            if (!hasRun(doc.uri, step)) continue;
+            const working = !!runs.get(runKey(doc.uri, step))?.child;
+            lenses.push(new vscode.CodeLens(lens.range, { title: working ? '$(loading~spin) Working…' : '$(comment-discussion) Run', tooltip: "Open this step's run", command: 'llmd.run', arguments: [doc.uri, step] }));
+          }
+        }
+        return lenses;
+      },
     }),
 
     vscode.languages.registerDocumentSymbolProvider(selector, {
@@ -364,7 +333,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (dir) {
           // After a "/", walk into that folder one level at a time.
           try {
-            const listed = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(rootOf(doc), dir));
+            const listed = await vscode.workspace.fs.readDirectory(vscode.Uri.joinPath(rootOf(doc.uri), dir));
             entries = listed.filter(([name]) => name !== '.git').map(([name, type]) => {
               const isDir = (type & vscode.FileType.Directory) !== 0;
               return [name + (isDir ? '/' : ''), isDir];
@@ -374,7 +343,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         } else {
           // Right after @ or +, search the whole project: typing "book" finds cmd/internal/models/book.go.
-          entries = await projectPaths(rootOf(doc));
+          entries = await projectPaths(rootOf(doc.uri));
         }
         const replace = new vscode.Range(pos.translate(0, -(typed.length - dir.length)), pos);
         return entries.map(([name, isDir]) => {

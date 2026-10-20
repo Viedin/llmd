@@ -5,6 +5,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { doneLines } from './extension';
+import { allow, commit, nextSteps, openChanges, runKey, runs, send, writeMessage } from './run';
+import { execFileSync } from 'child_process';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,6 +40,7 @@ export async function run() {
   await checkEnter();
   await checkSymbols();
   await checkDrift();
+  await checkRun();
   console.log('e2e ok');
 }
 
@@ -182,9 +185,10 @@ async function checkCodeLens() {
   const { doc } = await openTemp('lens.llmd', '# Calc\n## [x] Basic\n## More input\n### Notes\n## [ ] Fix it');
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
   assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.command, l.command?.arguments?.[1]]), [
+    [1, 'llmd.accept', 'Basic'],
     [2, 'llmd.implement', 'More input'], [2, 'llmd.plan', 'More input'],
     [4, 'llmd.implement', 'Fix it'], [4, 'llmd.plan', 'Fix it'],
-  ], 'Implement and Plan show on open ## steps only');
+  ], 'Implement and Plan show on open ## steps, Accept on done ones');
 }
 
 async function checkTypes() {
@@ -233,4 +237,137 @@ async function checkDrift() {
     drift = vscode.languages.getDiagnostics(spec.uri).map((d) => d.message).filter((m) => m.includes('has no'));
   }
   assert.deepStrictEqual(drift, ["store.ts has no 'remove'"], "a done step's missing method warns; an open step's doesn't");
+}
+
+// A fake agent stands in for claude: it logs its arguments, ticks the step in the spec like the real one would,
+// and prints a recorded stream-json run.
+async function checkRun() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-'));
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-agent-')); // outside the project, so not one of its changes
+  const log = path.join(tools, 'args.log');
+  const agent = path.join(tools, 'agent.js');
+  const file = path.join(dir, '.llmd', 'drafts', 'run.llmd');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(agent, `
+    const fs = require('fs');
+    fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+    const spec = ${JSON.stringify(file)};
+    fs.appendFileSync(${JSON.stringify(path.join(dir, 'a.ts'))}, 'export const built = true;\\n');
+    fs.writeFileSync(${JSON.stringify(path.join(dir, 'b.ts'))}, 'export const b = 2;\\n'); // not an Edit: a command made it
+    const first = fs.readFileSync(${JSON.stringify(log)}, 'utf8').trim().split('\\n').length === 1;
+    fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace('## Build it', '## [x] Build it\\nsnapshot: demo').replace('? which one', '// decided: this one'));
+    for (const e of [
+      { type: 'system', subtype: 'init', session_id: 'fake-1' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello from **the agent**' }] } },
+      { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: ${JSON.stringify(path.join(dir, 'a.ts'))} } }] } },
+      { type: 'result', subtype: 'success', session_id: 'fake-1', result: '\`\`\`\\nBuild it\\n\\nWith a body.\\n\`\`\`',
+        permission_denials: first ? [{ tool_name: 'Bash', tool_input: { command: 'go test ./...' } }] : [] },
+    ]) console.log(JSON.stringify(e));
+  `);
+  const settings = vscode.workspace.getConfiguration('llmd');
+  await settings.update('agentCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  try {
+    fs.writeFileSync(file, 'lang: typescript\n\n## Build it\n@a.ts\n? which one\n\n## Later\n');
+    // A repository with a.ts committed, so the run's changes come from git.
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'export const a = 1;\n');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir });
+    git('init', '-q');
+    git('config', 'user.name', 't');
+    git('config', 'user.email', 't@t');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'empty');
+    git('add', 'a.ts');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'a');
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'mine, from before the step\n');
+    const uri = vscode.Uri.file(file);
+    await vscode.window.showTextDocument(uri);
+    const key = runKey(uri, 'Build it');
+    const done = async () => {
+      for (let i = 0; i < 100 && (!runs.get(key) || runs.get(key)!.child); i++) await sleep(100);
+    };
+
+    await vscode.commands.executeCommand('llmd.implement', uri, 'Build it');
+    await done();
+    const run = runs.get(key);
+    assert.ok(run?.panel, "Implement opens the step's run");
+    assert.strictEqual(run.panel.viewColumn, vscode.ViewColumn.One, "the run takes the spec editor's place");
+    assert.deepStrictEqual(run.before, ['## Build it', '@a.ts', '? which one'], 'the step as it was when the run started');
+    // Markdown goes through VS Code's renderer, which adds its own attributes, so only the text is compared.
+    const shown = run.messages.map((m) => [m.who, m.parts.map((p) => `${p.kind}: ${p.html.replace(/<p[^>]*>/g, '<p>').trim()}`)]);
+    assert.deepStrictEqual(shown, [
+      ['you', ['text: <p>Implement &quot;Build it&quot;</p>']],
+      ['claude', ['text: <p>Hello from <strong>the agent</strong></p>', 'tool: Edit a.ts', 'error: Not allowed: Bash go test ./...']],
+    ], 'the reply streams in, markdown rendered, the tool call on its own line and the refused command last');
+    assert.strictEqual(run.messages[1].parts[1].file, path.join(dir, 'a.ts'), 'the edited file is kept for Changes');
+    assert.deepStrictEqual(run.diffs?.map((d) => [d.name, d.status, d.added, d.removed]), [['a.ts', 'M', 1, 0], ['b.ts', 'A', 1, 0]],
+      "every file the run changed, from git, but not notes.txt from before it or the spec");
+    assert.ok(run.diffs![0].diff.includes('+export const built = true;'), run.diffs![0].diff);
+    assert.match(run.diffs![0].new[1], /<span class="hljs-keyword">export<\/span>/, 'the code is highlighted');
+
+    // Open shows a file's changes in the diff editor, from the tree the run started from; Open all shows them all.
+    await openChanges(run, path.join(dir, 'a.ts'));
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    assert.ok(tab instanceof vscode.TabInputTextDiff, 'a diff editor');
+    assert.strictEqual((await vscode.workspace.openTextDocument(tab.original)).getText(), 'export const a = 1;\n');
+    await openChanges(run);
+    assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab?.label, 'Build it: changes (2 files)', 'the multi-file diff editor');
+
+    // A refused command can be allowed: it goes into the project's Claude settings, next to what's there.
+    const refused = run.messages[1].parts.find((p) => p.allow);
+    assert.deepStrictEqual(refused?.allow, ['Bash(go test *)']);
+    fs.mkdirSync(path.join(dir, '.claude'));
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), '{ "permissions": { "allow": ["Bash(ls *)"] } }');
+    assert.ok(await allow(run, refused!.allow!));
+    const claude = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.local.json'), 'utf8'));
+    assert.deepStrictEqual(claude.permissions.allow, ['Bash(ls *)', 'Bash(go test *)']);
+
+    await send(run, 'and now?');
+    await done();
+    const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]);
+    assert.ok(!calls[0].includes('--resume') && calls[0].at(-1)!.startsWith('implement the step "Build it" in .llmd/drafts/run.llmd. ') &&
+      calls[0].at(-1)!.includes("don't fold it"), `first run: ${calls[0]}`);
+    assert.ok(calls[1].join(' ').includes('--resume fake-1') && calls[1].at(-1)!.startsWith('and now?'), `a message resumes the step's session: ${calls[1]}`);
+    assert.strictEqual(run.messages.length, 4, 'the message and its answer join the same run');
+
+    // Another step is another chat: a new session.
+    await vscode.commands.executeCommand('llmd.plan', uri, 'Later');
+    await done();
+    await sleep(200);
+    const third = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[])[2];
+    assert.ok(!third.includes('--resume') && third.at(-1)!.startsWith('plan the step "Later"'), `each step starts its own chat: ${third}`);
+
+    // Accept folds the built step into the snapshot the agent named, and takes it out of the draft.
+    await vscode.commands.executeCommand('llmd.accept', uri, 'Build it');
+    const snapshot = fs.readFileSync(path.join(dir, '.llmd', 'snapshots', 'demo.llmd'), 'utf8');
+    assert.ok(snapshot.startsWith('# demo\nlang: typescript\n\n## [x] Current state') && snapshot.includes('@a.ts') && snapshot.includes('// decided: this one'), snapshot);
+    const left = fs.readFileSync(file, 'utf8');
+    assert.ok(!left.includes('Build it') && left.includes('## Later'), `the accepted step leaves the draft: ${left}`);
+    assert.strictEqual(runs.get(key)!.accepted, '.llmd/snapshots/demo.llmd');
+
+    // Claude writes the commit message, and Commit takes only the step's files: not notes.txt, the draft or your
+    // Claude permissions. Then the open steps are there to go on with.
+    const message = await writeMessage(runs.get(key)!);
+    assert.strictEqual(message, 'Build it\n\nWith a body.', 'the message without its fences');
+    await commit(runs.get(key)!, message!);
+    assert.deepStrictEqual(git('show', '--name-only', '--format=%s', 'HEAD').toString().trim().split('\n').filter(Boolean),
+      ['Build it', '.llmd/snapshots/demo.llmd', 'a.ts', 'b.ts']);
+    assert.strictEqual(runs.get(key)!.committed?.replace(/^\w+ /, ''), 'Build it');
+    assert.deepStrictEqual(await nextSteps(vscode.Uri.file(dir)), [{ spec: uri.toString(), step: 'Later', where: 'new feature' }]);
+
+    // Accepting a step the agent didn't tick asks it to finish the step first; this fake agent never does, so nothing folds.
+    const later = runs.get(runKey(uri, 'Later'))!;
+    await vscode.commands.executeCommand('llmd.accept', uri, 'Later');
+    for (let i = 0; i < 100 && (later.child || later.finishing); i++) await sleep(100);
+    const last = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]).at(-1)!;
+    assert.ok(last.at(-1)!.startsWith('I accept the step "Later" in .llmd/drafts/run.llmd as you built it.') && last.join(' ').includes('--resume'), `${last}`);
+    assert.ok(!later.accepted && fs.readFileSync(file, 'utf8').includes('## Later'), 'an unticked step stays where it is');
+
+    // Claude folding a ticked step itself, with llmd snapshot, accepts it too, even with the deleted draft's editor open.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Later', '## [x] Later\nsnapshot: demo'));
+    for (let i = 0; i < 50 && !later.last?.[0].includes('[x]'); i++) await sleep(100);
+    fs.rmSync(file);
+    await vscode.commands.executeCommand('llmd.accept', uri, 'Later');
+    assert.strictEqual(later.accepted, '.llmd/snapshots/demo.llmd', 'Accept on a step that was folded already');
+  } finally {
+    await settings.update('agentCommand', undefined, vscode.ConfigurationTarget.Global);
+  }
 }

@@ -16,7 +16,7 @@
   },
   "main": "./out/extension.js",
   "bin": { "llmd": "out/cli.js" },
-  "activationEvents": ["onLanguage:llmd"],
+  "activationEvents": ["onLanguage:llmd", "onWebviewPanel:llmd.run"],
   "contributes": {
     "languages": [
       {
@@ -32,6 +32,7 @@
       }
     ],
     "configurationDefaults": {
+      "files.exclude": { "**/.llmd/drafts": true },
       "[llmd]": {
         "editor.semanticHighlighting.enabled": true,
         "editor.tabSize": 2,
@@ -41,20 +42,19 @@
     "commands": [
       { "command": "llmd.enter", "title": "LLMD: Enter" },
       { "command": "llmd.implement", "title": "LLMD: Implement step" },
-      { "command": "llmd.plan", "title": "LLMD: Plan step" }
+      { "command": "llmd.plan", "title": "LLMD: Plan step" },
+      { "command": "llmd.newFeature", "title": "LLMD: New feature" },
+      { "command": "llmd.openFeature", "title": "LLMD: Open feature" },
+      { "command": "llmd.run", "title": "LLMD: Open step run" },
+      { "command": "llmd.accept", "title": "LLMD: Accept step" }
     ],
     "configuration": {
       "title": "LLMD",
       "properties": {
         "llmd.agentCommand": {
           "type": "string",
-          "default": "claude",
-          "markdownDescription": "Command that starts your coding agent when you click **Implement** above a step. The step's prompt is added as one quoted argument. For example `claude`, `codex`, or `codex --model gpt-5.5`."
-        },
-        "llmd.planCommand": {
-          "type": "string",
-          "default": "claude --permission-mode plan",
-          "markdownDescription": "Command that starts your coding agent in a mode that discusses without editing, when you click **Plan** above a step. The step's prompt is added as one quoted argument."
+          "default": "claude --permission-mode auto",
+          "markdownDescription": "The Claude Code command that runs a step when you click **Implement** or **Plan**, and answers in the step's run. LLMD runs it headless (`-p`) at the project root and adds the prompt and the session. The permission mode decides what Claude may do without asking: `auto` lets it run what's safe, like builds and tests. Anything it can't do shows as **Not allowed** in the run, with **Allow** to add it to the project's `.claude/settings.local.json`. Use `--permission-mode acceptEdits` if `auto` isn't available on your plan."
         }
       }
     },
@@ -62,7 +62,9 @@
       "commandPalette": [
         { "command": "llmd.enter", "when": "false" },
         { "command": "llmd.implement", "when": "false" },
-        { "command": "llmd.plan", "when": "false" }
+        { "command": "llmd.plan", "when": "false" },
+        { "command": "llmd.run", "when": "false" },
+        { "command": "llmd.accept", "when": "false" }
       ]
     },
     "keybindings": [

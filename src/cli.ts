@@ -2,24 +2,39 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { projectOf } from './refs';
-import { fold } from './snapshot';
+import { fold, foldInto, takeNamed } from './snapshot';
 
 const USAGE = 'usage: llmd snapshot [spec]';
 
 export function main(args: string[]): number {
   const [command, file] = args;
   if (command !== 'snapshot') return fail(USAGE);
-  const specs = file ? [file] : fs.existsSync('.llmd') ? fs.readdirSync('.llmd').filter((f) => f.endsWith('.llmd')).map((f) => path.join('.llmd', f)) : [];
+  const list = (dir: string) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.llmd')).map((f) => path.join(dir, f)) : []);
+  const specs = file ? [file] : [...list('.llmd'), ...list(path.join('.llmd', 'drafts'))];
   if (!specs.length) return fail(`No spec in .llmd/. ${USAGE}`);
   if (!specs.filter(snapshot).length) console.log('Nothing to fold: no done steps besides Current state.');
   return 0;
 }
 
-// Folds one spec and archives its folded steps. Returns whether it folded anything.
+// Folds one spec's done steps: those that name a snapshot into .llmd/snapshots/<name>.llmd, the others into the spec's own
+// Current state, archiving them. Returns whether it folded anything.
 function snapshot(spec: string): boolean {
-  const { text, folded } = fold(fs.readFileSync(spec, 'utf8'));
-  if (!folded.length) return false;
   const absolute = path.resolve(spec);
+  const original = fs.readFileSync(spec, 'utf8');
+  const named = takeNamed(original);
+  for (const step of named.steps) {
+    const target = path.join(projectOf(absolute) ?? path.dirname(absolute), '.llmd', 'snapshots', step.name + '.llmd');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const before = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : undefined;
+    fs.writeFileSync(target, foldInto(before, step.lines, step.name, original.match(/^lang:.*$/m)?.[0]));
+    console.log(`Folded ${step.lines[0].replace(/^##\s+\[[xX]\]\s*/, '')} into ${path.relative(process.cwd(), target)}`);
+  }
+  // A draft with no steps left is done with.
+  if (named.steps.length && /[\\/]\.llmd[\\/]drafts[\\/]/.test(absolute) && !/^##\s/m.test(named.text)) fs.rmSync(spec);
+  else if (named.steps.length) fs.writeFileSync(spec, named.text);
+  if (!fs.existsSync(spec)) return true;
+  const { text, folded } = fold(named.text);
+  if (!folded.length) return named.steps.length > 0;
   const archive = path.join(projectOf(absolute) ?? path.dirname(absolute), '.llmd', 'archive', path.basename(spec));
   fs.mkdirSync(path.dirname(archive), { recursive: true });
   const before = fs.existsSync(archive) ? fs.readFileSync(archive, 'utf8').trimEnd() + '\n\n' : '';
