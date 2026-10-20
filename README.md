@@ -93,7 +93,7 @@ Build the extension and install it into your normal VS Code, then reload the win
 
 ```bash
 npm install
-npx @vscode/vsce package --no-rewrite-relative-links --out llmd.vsix
+npx @vscode/vsce package --out llmd.vsix
 code --install-extension llmd.vsix --force
 ```
 
@@ -120,6 +120,7 @@ npm link
 3. The Release workflow checks the tag matches `package.json`, then builds both files and attaches them to a GitHub release:
    - `llmd.vsix`, the extension, from `vsce package`. `.vscodeignore` decides what goes in it.
    - `llmd.tgz`, just the CLI, from `npm pack`. `.npmignore` lets only the CLI's four files in, and `prepack` compiles them, so installing never builds anything.
+4. With the `VSCE_PAT` and `OVSX_PAT` repository secrets set, it also publishes `llmd.vsix` to the VS Code Marketplace and Open VSX. Without them those steps are skipped.
 
 The skill needs no build: Claude Code and `npx skills` read `skills/llmd/` from `main`.
 

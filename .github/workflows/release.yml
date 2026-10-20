@@ -10,6 +10,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -20,7 +23,12 @@ jobs:
       - run: npm ci
       # Fixed asset names, so the README's releases/latest/download/ links never change.
       - run: mv "$(npm pack | tail -1)" llmd.tgz
-      - run: npx @vscode/vsce package --no-rewrite-relative-links --out llmd.vsix
+      - run: npx @vscode/vsce package --out llmd.vsix
       - run: gh release create "$GITHUB_REF_NAME" llmd.tgz llmd.vsix --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+      # Each store publishes once its token is added as a repository secret, and is skipped until then.
+      - if: env.VSCE_PAT != ''
+        run: npx @vscode/vsce publish --packagePath llmd.vsix
+      - if: env.OVSX_PAT != ''
+        run: npx ovsx publish llmd.vsix
