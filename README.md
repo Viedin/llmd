@@ -1,6 +1,4 @@
-<img src="images/icon.png" alt="LLMD logo" width="96" align="right">
-
-# LLMD
+# <img src="images/icon.png" alt="LLMD logo" width="40" align="top"> LLMD
 
 **Steer the architecture, let the agent write the code.**
 
