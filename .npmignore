@@ -1,0 +1,8 @@
+# The npm package is just the CLI; the extension ships as a .vsix
+/*
+!/out/
+/out/*
+!/out/cli.js
+!/out/refs.js
+!/out/snapshot.js
+!/out/outline.js

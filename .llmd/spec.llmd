@@ -257,6 +257,10 @@ lang: typescript
   - the llmd.agentCommand setting and the hidden llmd.implement command
   - use images/file.svg as the llmd language icon, for light and dark themes
   - a "bin" entry for llmd, so "npm link" puts it on the PATH
+  - "prepack" compiles, so the release tarball is prebuilt and installing it runs no scripts
+
+@.npmignore
+  - the npm package is only the CLI: out/cli.js, refs.js, snapshot.js and outline.js
   - the llmd.planCommand setting, "claude --permission-mode plan" by default, and the hidden llmd.plan command
   - engines.vscode and @types/vscode at 1.93, the first version with terminal shell integration events
 

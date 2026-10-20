@@ -66,11 +66,11 @@ For Codex and other agents:
 npx skills add viedin/llmd
 ```
 
-New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
+The skill comes straight from the repo, so there's nothing to build. New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
 
 ### The CLI
 
-The `llmd` command doesn't need VS Code, so it works the same from Zed or any terminal:
+The `llmd` command doesn't need VS Code, so it works the same from Zed or any terminal. It comes prebuilt from the latest release, so all it needs is Node. Run the same command to update:
 
 ```bash
 npm install -g https://github.com/viedin/llmd/releases/latest/download/llmd.tgz
@@ -89,12 +89,12 @@ The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md) covers each 
 
 Issues and pull requests are welcome. LLMD is described in its own format: [.llmd/spec.llmd](.llmd/spec.llmd) is the current architecture and the planned steps, with the finished steps in [.llmd/archive/](.llmd/archive/spec.llmd).
 
-Build the extension and install it into your normal VS Code, then reload the window:
+Build the extension and install it into your normal VS Code, then reload the window. `npm install` only fetches the dependencies; packaging compiles:
 
 ```bash
 npm install
-npx @vscode/vsce package --no-rewrite-relative-links
-code --install-extension llmd-0.0.4.vsix --force
+npx @vscode/vsce package --no-rewrite-relative-links --out llmd.vsix
+code --install-extension llmd.vsix --force
 ```
 
 Link the skill and the CLI to your checkout, so edits apply straight away (`npm run compile` after changing the CLI):
@@ -109,12 +109,19 @@ npm link
 - `npm run test:e2e` starts a separate copy of VS Code and checks completion, warnings, colors, Enter, dimming, the outline and Ctrl+click. The first run downloads that copy into `.vscode-test/`.
 - **F5** opens a debug window running your current code. Open `.llmd` files there with **File → Open File**.
 
-To release, bump `version` in `package.json`, commit, then push a matching tag. The Release workflow builds `llmd.vsix` and `llmd.tgz` and attaches them to a GitHub release:
+### Releasing
 
-```bash
-git tag "v$(node -p "require('./package.json').version")"
-git push origin --tags
-```
+1. Bump `version` in both `package.json` and `.claude-plugin/plugin.json`. Claude Code only updates the skill when the plugin's version changes.
+2. Commit, then push the commit and a matching tag:
+   ```bash
+   git tag "v$(node -p "require('./package.json').version")"
+   git push origin main --tags
+   ```
+3. The Release workflow checks the tag matches `package.json`, then builds both files and attaches them to a GitHub release:
+   - `llmd.vsix`, the extension, from `vsce package`. `.vscodeignore` decides what goes in it.
+   - `llmd.tgz`, just the CLI, from `npm pack`. `.npmignore` lets only the CLI's four files in, and `prepack` compiles them, so installing never builds anything.
+
+The skill needs no build: Claude Code and `npx skills` read `skills/llmd/` from `main`.
 
 ## License
 
