@@ -122,8 +122,7 @@ npm link
 3. The Release workflow checks the tag matches `package.json`, then builds both files and attaches them to a GitHub release:
    - `llmd.vsix`, the extension, from `vsce package`. `.vscodeignore` decides what goes in it.
    - `llmd.tgz`, just the CLI, from `npm pack`. `.npmignore` lets only the CLI's four files in, and `prepack` compiles them, so installing never builds anything.
-4. With the `OVSX_PAT` repository secret set, it also publishes `llmd.vsix` to Open VSX. Without it that step is skipped.
-5. Upload the same `llmd.vsix` to the VS Code Marketplace by hand: download it from the release, then on the [publisher page](https://marketplace.visualstudio.com/manage/publishers/viedin) use **Update** (the first time, **New extension → Visual Studio Code**).
+4. Upload the same `llmd.vsix` to the VS Code Marketplace by hand: download it from the release, then on the [publisher page](https://marketplace.visualstudio.com/manage/publishers/viedin) use **Update** (the first time, **New extension → Visual Studio Code**).
 
 The skill needs no build: Claude Code and `npx skills` read `skills/llmd/` from `main`.
 
