@@ -214,6 +214,12 @@ lang: typescript
   - describing existing code writes one spec per feature plus app.llmd, each with its own Current state; one spec is fine when there are no clear features
 
 @README.md
+  - a landing page: pitch, a short example, install, quick start, contributing and license
+  - how to install the extension, the skill and the CLI
+  - links to the guide by absolute GitHub URL, so they also work in the packaged extension
+
+@docs/guide.md
+  - the in-depth how-to, moved out of the README, with a contents list at the top
   - specs go in .llmd/, with a tip on gitignoring it per repo or globally
   - steps without [ ], and prompts that don't need the spec's path
   - explain the Implement button and how to switch it to Codex
@@ -222,7 +228,6 @@ lang: typescript
   - say the agent skims the other specs, and asks about conflicting open steps
   - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
   - the suggested AGENTS.md line points at Current state as the architecture; Claude Code gets a CLAUDE.md that imports it
-  - how to install the extension, the skill and the CLI
   - how to write a spec, with every line type and an example
   - how to work with the agent from a spec: implement, answer ? questions, review, snapshot and commit
   - explain steps: how to write them, "implement the next step", ticking, and a commit per step

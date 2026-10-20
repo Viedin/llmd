@@ -14,3 +14,4 @@ example.llmd
 .claude-plugin/**
 *.tgz
 .github/**
+docs/**
