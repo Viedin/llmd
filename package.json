@@ -4,6 +4,7 @@
   "description": "Markdown flow specs with @file references, for planning work with an LLM",
   "version": "0.0.5",
   "publisher": "viedin",
+  "icon": "images/icon.png",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/viedin/llmd" },
   "homepage": "https://github.com/viedin/llmd#readme",

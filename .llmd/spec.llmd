@@ -256,6 +256,7 @@ lang: typescript
 @package.json
   - the llmd.agentCommand setting and the hidden llmd.implement command
   - use images/file.svg as the llmd language icon, for light and dark themes
+  - images/icon.png as the extension's icon in the Marketplace, Open VSX and the Extensions view
   - a "bin" entry for llmd, so "npm link" puts it on the PATH
   - "prepack" compiles, so the release tarball is prebuilt and installing it runs no scripts
 
@@ -266,6 +267,10 @@ lang: typescript
 
 @images/file.svg
   - a checklist glyph, one ticked box and one open, in purple
+
+@images/icon.svg
+  - the logo: the file.svg glyph, scaled up on a dark rounded tile so it reads on light and dark backgrounds
+  - rendered to images/icon.png at 256px, since the Marketplace and READMEs packaged by vsce don't accept SVG
 
 @src/snapshot.ts
   : Line

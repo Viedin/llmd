@@ -11,7 +11,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v5
@@ -27,8 +26,7 @@ jobs:
       - run: gh release create "$GITHUB_REF_NAME" llmd.tgz llmd.vsix --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
-      # Each store publishes once its token is added as a repository secret, and is skipped until then.
-      - if: env.VSCE_PAT != ''
-        run: npx @vscode/vsce publish --packagePath llmd.vsix
+      # Open VSX publishes once OVSX_PAT is a repository secret, and is skipped until then.
+      # The VS Code Marketplace is uploaded by hand: its tokens retire on 2026-12-01 and --oidc isn't supported yet.
       - if: env.OVSX_PAT != ''
         run: npx ovsx publish llmd.vsix
