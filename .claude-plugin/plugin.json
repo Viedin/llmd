@@ -1,7 +1,7 @@
 {
   "name": "llmd",
   "description": "Read, write and implement .llmd spec files one step at a time",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "author": { "name": "Viedin" },
   "repository": "https://github.com/viedin/llmd",
   "license": "MIT"
