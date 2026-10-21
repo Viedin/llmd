@@ -15,7 +15,6 @@
     "vscode": "^1.93.0"
   },
   "main": "./out/extension.js",
-  "bin": { "llmd": "out/cli.js" },
   "activationEvents": ["onLanguage:llmd", "onWebviewPanel:llmd.run"],
   "contributes": {
     "languages": [
@@ -32,7 +31,6 @@
       }
     ],
     "configurationDefaults": {
-      "files.exclude": { "**/.llmd/drafts": true },
       "[llmd]": {
         "editor.semanticHighlighting.enabled": true,
         "editor.tabSize": 2,
@@ -44,9 +42,8 @@
       { "command": "llmd.implement", "title": "LLMD: Implement step" },
       { "command": "llmd.plan", "title": "LLMD: Plan step" },
       { "command": "llmd.newFeature", "title": "LLMD: New feature" },
-      { "command": "llmd.openFeature", "title": "LLMD: Open feature" },
       { "command": "llmd.run", "title": "LLMD: Open step run" },
-      { "command": "llmd.accept", "title": "LLMD: Accept step" }
+      { "command": "llmd.done", "title": "LLMD: Done with step" }
     ],
     "configuration": {
       "title": "LLMD",
@@ -64,7 +61,7 @@
         { "command": "llmd.implement", "when": "false" },
         { "command": "llmd.plan", "when": "false" },
         { "command": "llmd.run", "when": "false" },
-        { "command": "llmd.accept", "when": "false" }
+        { "command": "llmd.done", "when": "false" }
       ]
     },
     "keybindings": [
@@ -87,8 +84,7 @@
     "watch": "tsc -watch -p .",
     "vscode:prepublish": "npm run compile",
     "test": "npm run compile && node out/test.js",
-    "test:e2e": "npm run compile && node out/runE2E.js",
-    "prepack": "npm run compile"
+    "test:e2e": "npm run compile && node out/runE2E.js"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

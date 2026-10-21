@@ -1,9 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { OutlineNode, openSteps, parseOutline } from './outline';
-import { hasRun, initRuns, onDidChangeRuns, rootOf, runKey, runs, runStep } from './run';
+import { codeHover, missing, onDidChangeCode, symbolsOf, watchCode } from './code';
+import { OutlineNode, openSteps, parseOutline, stepSection } from './outline';
+import { done, hasRun, initRuns, onDidChangeRuns, openRun, rootOf, runKey, runs, runStep } from './run';
 import { findRefs } from './refs';
-import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
+import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, typeSpans, unitAbove } from './symbols';
 
 async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
   try {
@@ -48,7 +49,46 @@ export function toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument): vscod
 
 const indexOf = (doc: vscode.TextDocument) => indexSymbols(parseOutline(doc.getText()));
 
-export function findDefinition(doc: vscode.TextDocument, pos: vscode.Position): vscode.Location | undefined {
+// Where a claimed type or method's name sits on its line.
+function nameRange(doc: vscode.TextDocument, c: Claim): vscode.Range {
+  const line = doc.lineAt(c.line);
+  const start = line.text.indexOf(c.name, line.firstNonWhitespaceCharacterIndex);
+  return new vscode.Range(c.line, start, c.line, start + c.name.length);
+}
+
+// The type or method the cursor is on the name of, where the spec lists it under its unit.
+const claimAt = (doc: vscode.TextDocument, pos: vscode.Position) =>
+  claims(parseOutline(doc.getText())).find((c) => c.line === pos.line && nameRange(doc, c).contains(pos));
+
+const codeOf = (doc: vscode.TextDocument, path: string) => symbolsOf(vscode.Uri.joinPath(rootOf(doc.uri), path));
+
+// The types and methods the spec plans that the code doesn't have yet: under a + unit, or missing from their @ file.
+export async function newRanges(doc: vscode.TextDocument): Promise<vscode.Range[]> {
+  const ranges: vscode.Range[] = [];
+  for (const c of claims(parseOutline(doc.getText()))) {
+    if (isNew(c, c.newFile ? undefined : await codeOf(doc, c.path))) ranges.push(nameRange(doc, c));
+  }
+  return ranges;
+}
+
+// On a type or method the code has: its real hover. On one it doesn't have yet: that it's new.
+async function hover(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.Hover | undefined> {
+  const c = claimAt(doc, pos);
+  if (!c) return;
+  const range = nameRange(doc, c);
+  if (c.newFile) return new vscode.Hover(`New: \`${c.path}\` is a new file`, range);
+  const names = await codeOf(doc, c.path);
+  const symbol = names?.get(c.name);
+  if (!symbol) return names && new vscode.Hover(`New: \`${c.path}\` has no \`${c.name}\` yet`, range);
+  const md = await codeHover(symbol.at);
+  return md && new vscode.Hover(md, range);
+}
+
+// Ctrl+click on a type or method the code has opens it in its file; on a name in a logic line, its line in the spec.
+export async function findDefinition(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.Location | undefined> {
+  const c = claimAt(doc, pos);
+  const symbol = c && (await codeOf(doc, c.path))?.get(c.name);
+  if (symbol) return symbol.at;
   const range = doc.getWordRangeAtPosition(pos, /[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?/);
   if (!range || inPath(doc.lineAt(pos).text, pos.character)) return; // @paths open the file instead
   const [name, member] = doc.getText(range).split('.');
@@ -60,9 +100,36 @@ export function findDefinition(doc: vscode.TextDocument, pos: vscode.Position): 
   return new vscode.Location(doc.uri, new vscode.Position(line, doc.lineAt(line).firstNonWhitespaceCharacterIndex));
 }
 
-export function completeNames(doc: vscode.TextDocument, pos: vscode.Position): vscode.CompletionItem[] {
+const CALLABLE = new Set([vscode.SymbolKind.Method, vscode.SymbolKind.Function, vscode.SymbolKind.Constructor]);
+const TYPES = new Set([vscode.SymbolKind.Class, vscode.SymbolKind.Interface, vscode.SymbolKind.Struct, vscode.SymbolKind.Enum]);
+const symbolAt = new WeakMap<vscode.CompletionItem, vscode.Location>(); // where a completion's symbol is, for its docs
+
+// The unit's real types and methods, written the spec's way: "save()" and ": Store".
+async function codeCompletions(doc: vscode.TextDocument, unit: string): Promise<vscode.CompletionItem[]> {
+  return [...((await codeOf(doc, unit)) ?? [])].map(([name, s]) => {
+    const kind = CALLABLE.has(s.kind) ? vscode.CompletionItemKind.Method : TYPES.has(s.kind) ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.Field;
+    const item = new vscode.CompletionItem(name, kind);
+    item.insertText = CALLABLE.has(s.kind) ? `${name}()` : TYPES.has(s.kind) ? `: ${name}` : name;
+    item.detail = s.detail || unit;
+    symbolAt.set(item, s.at);
+    return item;
+  });
+}
+
+// A completion of a real symbol gets its docs when it's picked out in the list.
+async function resolveCompletion(item: vscode.CompletionItem) {
+  const at = symbolAt.get(item);
+  if (at) item.documentation = await codeHover(at);
+  return item;
+}
+
+export async function completeNames(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
   const text = doc.lineAt(pos).text;
   if (inPath(text, pos.character)) return [];
+  // A new line under a unit offers what its file really has.
+  const unit = /^\s*-\s+\w*$/.test(text.slice(0, pos.character)) && unitAbove(doc.getText(), pos.line);
+  const code = unit ? await codeCompletions(doc, unit) : [];
+  if (code.length) return code;
   const index = indexOf(doc);
   const dot = text.slice(0, pos.character).match(/(?<![\w.])([A-Za-z_]\w*)\.(\w*)$/);
   if (dot) {
@@ -132,54 +199,6 @@ export function callProblems(doc: vscode.TextDocument): vscode.Diagnostic[] {
   });
 }
 
-// Symbol names per code file, from its language's own extension. Dropped when the file is saved.
-const codeSymbols = new Map<string, Promise<Set<string> | undefined>>();
-
-function symbolsOf(uri: vscode.Uri): Promise<Set<string> | undefined> {
-  const key = uri.toString();
-  let names = codeSymbols.get(key);
-  if (!names) {
-    names = (async () => {
-      const found = await vscode.commands.executeCommand<(vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined>(
-        'vscode.executeDocumentSymbolProvider', uri);
-      if (!found?.length) return undefined; // no provider, or it isn't ready yet: no verdict
-      const set = new Set<string>();
-      const walk = (symbols: (vscode.DocumentSymbol | vscode.SymbolInformation)[]) => symbols.forEach((s) => {
-        set.add(symbolName(s.name));
-        if ('children' in s) walk(s.children);
-      });
-      walk(found);
-      return set;
-    })();
-    codeSymbols.set(key, names);
-    names.then((set) => set || codeSymbols.delete(key)); // ask again next time rather than remember "no answer"
-  }
-  return names;
-}
-
-const driftProblem = (doc: vscode.TextDocument, c: Claim) => {
-  const line = doc.lineAt(c.line);
-  const range = new vscode.Range(c.line, line.firstNonWhitespaceCharacterIndex, c.line, line.text.length);
-  return new vscode.Diagnostic(range, `${c.path} has no '${c.name}'`, vscode.DiagnosticSeverity.Warning);
-};
-
-// Types and methods that done steps declare but the code no longer has.
-export async function driftProblems(doc: vscode.TextDocument): Promise<vscode.Diagnostic[]> {
-  const root = rootOf(doc.uri);
-  const files = new Map<string, Promise<Set<string> | undefined>>();
-  const problems: vscode.Diagnostic[] = [];
-  for (const c of claims(parseOutline(doc.getText()))) {
-    if (!files.has(c.path)) {
-      const uri = vscode.Uri.joinPath(root, c.path);
-      // Missing files already warn; folder units like Go packages aren't checked.
-      files.set(c.path, statOrNull(uri).then((stat) => (stat && stat.type & vscode.FileType.File ? symbolsOf(uri) : undefined)));
-    }
-    const names = await files.get(c.path)!;
-    if (names && !names.has(c.name)) problems.push(driftProblem(doc, c));
-  }
-  return problems;
-}
-
 // Every line of a done step (## [x] down to the next heading of the same or a higher level),
 // plus [x] methods and the deeper-indented lines under them.
 export function doneLines(text: string): number[] {
@@ -231,48 +250,44 @@ export function activate(context: vscode.ExtensionContext) {
   const diagnostics = vscode.languages.createDiagnosticCollection('llmd');
 
   initRuns(context);
+  watchCode(context);
 
-  // Drift is worked out on open and on save. In between, its warnings follow their lines but nothing new is flagged,
-  // so a half-typed name in Current state doesn't warn.
-  const drift = new Map<string, Set<string>>(); // spec → drift messages from its last check
   const check = async (doc: vscode.TextDocument) => {
     if (doc.languageId !== 'llmd') return;
-    const known = drift.get(doc.uri.toString()) ?? new Set();
-    const drifted = claims(parseOutline(doc.getText())).map((c) => driftProblem(doc, c)).filter((d) => known.has(d.message));
-    diagnostics.set(doc.uri, [...(await scan(doc)).problems, ...callProblems(doc), ...drifted]);
+    diagnostics.set(doc.uri, [...(await scan(doc)).problems, ...callProblems(doc)]);
   };
-  const checkDrift = async (doc: vscode.TextDocument) => {
-    if (doc.languageId !== 'llmd') return;
-    // The archive describes the code as it was, so it isn't held to the code as it is.
-    const archived = /[\\/]\.llmd[\\/]archive[\\/]/.test(doc.uri.fsPath);
-    if (!archived) drift.set(doc.uri.toString(), new Set((await driftProblems(doc)).map((d) => d.message)));
-    await check(doc);
-  };
-  vscode.workspace.textDocuments.forEach(checkDrift);
+  vscode.workspace.textDocuments.forEach(check);
 
+  // Done steps are dimmed, and what the step adds to the code is colored as new.
   const dim = vscode.window.createTextEditorDecorationType({ opacity: '0.5' });
-  const decorate = (editor: vscode.TextEditor) => {
-    if (editor.document.languageId !== 'llmd') return;
-    editor.setDecorations(dim, doneLines(editor.document.getText()).map((i) => editor.document.lineAt(i).range));
+  const fresh = vscode.window.createTextEditorDecorationType({ color: new vscode.ThemeColor('gitDecoration.addedResourceForeground') });
+  const decorate = async (editor: vscode.TextEditor) => {
+    const doc = editor.document;
+    if (doc.languageId !== 'llmd') return;
+    editor.setDecorations(dim, doneLines(doc.getText()).map((i) => doc.lineAt(i).range));
+    const version = doc.version;
+    const ranges = await newRanges(doc);
+    if (doc.version === version) editor.setDecorations(fresh, ranges); // a newer edit decorates for itself
   };
   vscode.window.visibleTextEditors.forEach(decorate);
+  const lensChanges = new vscode.EventEmitter<void>(); // a run started or ended, or the code changed under a built step
 
   context.subscriptions.push(
     diagnostics,
     dim,
-    vscode.workspace.onDidOpenTextDocument(checkDrift),
-    vscode.workspace.onDidSaveTextDocument((saved) => {
-      codeSymbols.delete(saved.uri.toString());
-      vscode.workspace.textDocuments.forEach(checkDrift);
+    fresh,
+    lensChanges,
+    onDidChangeRuns(() => lensChanges.fire()),
+    onDidChangeCode(() => {
+      lensChanges.fire();
+      vscode.window.visibleTextEditors.forEach(decorate);
     }),
+    vscode.workspace.onDidOpenTextDocument(check),
     vscode.workspace.onDidChangeTextDocument((e) => {
       check(e.document);
       vscode.window.visibleTextEditors.filter((ed) => ed.document === e.document).forEach(decorate);
     }),
-    vscode.workspace.onDidCloseTextDocument((doc) => {
-      diagnostics.delete(doc.uri);
-      drift.delete(doc.uri.toString());
-    }),
+    vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri)),
     vscode.window.onDidChangeVisibleTextEditors((editors) => editors.forEach(decorate)),
     vscode.commands.registerCommand('llmd.enter', () => {
       const editor = vscode.window.activeTextEditor;
@@ -281,30 +296,37 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand('llmd.implement', (uri: vscode.Uri, step: string) => runStep('implement', uri, step)),
     vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runStep('plan', uri, step)),
+    vscode.commands.registerCommand('llmd.done', (spec: vscode.Uri, step: string) => done(openRun(spec, step))),
     vscode.languages.registerCodeLensProvider(selector, {
-      onDidChangeCodeLenses: onDidChangeRuns,
-      provideCodeLenses: (doc) => {
-        const lenses = openSteps(doc.getText()).flatMap((s) => {
+      onDidChangeCodeLenses: lensChanges.event,
+      provideCodeLenses: async (doc) => {
+        const text = doc.getText();
+        const lenses: vscode.CodeLens[] = [];
+        // A step that has a run gets a way back to it, which says when the agent is still working there.
+        const back = (range: vscode.Range, step: string) => {
+          if (!hasRun(doc.uri, step)) return;
+          const working = !!runs.get(runKey(doc.uri, step))?.child;
+          lenses.push(new vscode.CodeLens(range, { title: working ? '$(loading~spin) Working…' : '$(comment-discussion) Run', tooltip: "Open this step's run", command: 'llmd.run', arguments: [doc.uri, step] }));
+        };
+        for (const s of openSteps(text)) {
           const range = doc.lineAt(s.line).range;
-          return [
+          // Once a step has a run, Implement and Plan are in its run's bar, so the lens just goes back there.
+          if (hasRun(doc.uri, s.title)) back(range, s.title);
+          else lenses.push(
             new vscode.CodeLens(range, { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] }),
             new vscode.CodeLens(range, { title: '$(lightbulb) Plan', tooltip: 'Talk this step through with the agent, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
-          ];
-        });
-        // A built step waits for you: Accept folds it into its snapshot.
-        doc.getText().split(/\r?\n/).forEach((line, i) => {
-          const done = line.match(/^##\s+\[[xX]\]\s*(.*?)\s*$/);
-          if (!done || done[1] === 'Current state') return;
-          lenses.push(new vscode.CodeLens(doc.lineAt(i).range, { title: '$(check) Accept', tooltip: 'Fold this step into its snapshot', command: 'llmd.accept', arguments: [doc.uri, done[1]] }));
-        });
-        // A step that has a run gets a way back to it, which says when the agent is still working there.
-        for (const lens of [...lenses]) {
-          const step = lens.command!.arguments![1] as string;
-          if (lens.command!.command === 'llmd.plan' || lens.command!.command === 'llmd.accept') {
-            if (!hasRun(doc.uri, step)) continue;
-            const working = !!runs.get(runKey(doc.uri, step))?.child;
-            lenses.push(new vscode.CodeLens(lens.range, { title: working ? '$(loading~spin) Working…' : '$(comment-discussion) Run', tooltip: "Open this step's run", command: 'llmd.run', arguments: [doc.uri, step] }));
-          }
+          );
+        }
+        // A built step waits for you. Done takes it out of the spec, once the code has everything the step lists.
+        for (const [i, line] of text.split(/\r?\n/).entries()) {
+          const step = line.match(/^##\s+\[[xX]\]\s*(.*?)\s*$/)?.[1];
+          if (step === undefined) continue;
+          const range = doc.lineAt(i).range;
+          const gaps = await missing(rootOf(doc.uri), stepSection(text, step)?.lines ?? []);
+          lenses.push(new vscode.CodeLens(range, gaps.length
+            ? { title: `$(warning) Not in the code yet: ${gaps[0]}${gaps.length > 1 ? ` and ${gaps.length - 1} more` : ''}`, tooltip: gaps.join('\n'), command: '' }
+            : { title: '$(check) Done', tooltip: 'Take this step out of the spec: the code has it now', command: 'llmd.done', arguments: [doc.uri, step] }));
+          back(range, step);
         }
         return lenses;
       },
@@ -315,7 +337,8 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.languages.registerDefinitionProvider(selector, { provideDefinition: findDefinition }),
-    vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: completeNames }, '.', ':'),
+    vscode.languages.registerHoverProvider(selector, { provideHover: hover }),
+    vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: completeNames, resolveCompletionItem: resolveCompletion }, '.', ':'),
     vscode.languages.registerDocumentSemanticTokensProvider(selector, { provideDocumentSemanticTokens: typeTokens }, typeLegend),
 
     vscode.languages.registerDocumentLinkProvider(selector, {

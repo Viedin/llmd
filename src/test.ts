@@ -2,8 +2,7 @@ import * as assert from 'assert';
 import { agentArgs, allowRules, render, stepPrompt } from './agent';
 import { OutlineNode, openSteps, parseOutline, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
-import { fold, foldInto, snapshotName, takeNamed } from './snapshot';
-import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, symbolName, typeSpans } from './symbols';
+import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, symbolName, typeSpans, unitAbove } from './symbols';
 
 const text = [
   '- see @api/upload.go.',
@@ -17,6 +16,7 @@ const text = [
 const refs = findRefs(text);
 assert.deepStrictEqual(refs.map((r) => r.path), ['api/upload.go', 'internal/sync/', './pkg/util.go']);
 for (const r of refs) assert.strictEqual(text.slice(r.start, r.end), '@' + r.path);
+assert.deepStrictEqual(findRefs('~@src/gone.ts\n- ~@old.go'), [], 'a removed file is no reference');
 
 assert.strictEqual(projectOf('/code/app/.llmd/flow.llmd'), '/code/app');
 assert.strictEqual(projectOf('/code/app/.llmd/sub/flow.llmd'), '/code/app');
@@ -159,77 +159,9 @@ assert.ok(builtinTypes('lang: rust').includes('i32') && builtinTypes('no lang').
 assert.ok(inTypePosition('    - id: in', 12) && inTypePosition('- Save(b bo', 11));
 assert.ok(!inTypePosition('    - id: in', 7) && !inTypePosition('  - : bo', 8) && !inTypePosition('- read the input', 10));
 
-const history = fold([
-  '# Calc',
-  'lang: go',
-  '',
-  '## [x] Current state',
-  '',
-  '@main.go',
-  '  - run()',
-  '    - read input',
-  '    - print result',
-  '  - old()',
-  '',
-  '## [x] Add history',
-  '// why we wanted it: dropped',
-  '+history.go',
-  '  : History',
-  '    - items: []string',
-  '@main.go',
-  '  - [x] run() -> error',
-  '    - read input',
-  '    - save to History',
-  '    - ~print result',
-  '    ! history keeps the newest item last',
-  '  - ~old()',
-  '  // decided: keep 10 items',
-  '### Notes',
-  '// decided: no persistence',
-  '! go test passes',
-  '',
-  '## Open step',
-  '@main.go',
-  '  - more()',
-  '',
-].join('\n'));
-assert.strictEqual(history.text, [
-  '# Calc',
-  'lang: go',
-  '',
-  '## [x] Current state',
-  '',
-  '@main.go',
-  '  - run() -> error',
-  '    - read input',
-  '    - save to History',
-  '    ! history keeps the newest item last',
-  '  // decided: keep 10 items',
-  '',
-  '@history.go',
-  '  : History',
-  '    - items: []string',
-  '',
-  '// decided: no persistence',
-  '',
-  '## Open step',
-  '@main.go',
-  '  - more()',
-  '',
-].join('\n'));
-assert.strictEqual(history.folded.length, 1);
-assert.ok(history.folded[0].startsWith('## [x] Add history') && history.folded[0].includes('dropped') && history.folded[0].includes('! go test passes'));
-
-const fresh = fold('# T\r\n\r\n## [x] One\r\n+a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n');
-assert.strictEqual(fresh.text, '# T\r\n\r\n## [x] Current state\r\n\r\n@a.go\r\n  - A()\r\n  ```\r\n  ## not a step\r\n    kept as is\r\n  ```\r\n\r\n## Two\r\n',
-  'Current state is created above the first step; fences and CRLF survive');
-assert.deepStrictEqual(fold('# T\n## Open\n').folded, [], 'nothing done, nothing folded');
-assert.strictEqual(fold('## [x] Current state\n@Migrations\n  - generated: ef migrations add Init\n## [x] Identity\n@Migrations\n  - generated: ef migrations add Identity\n').text,
-  '## [x] Current state\n\n@Migrations\n  - generated: ef migrations add Init\n  - generated: ef migrations add Identity\n', 'each generated: command is kept');
-
 const claimed = claims(parseOutline([
   '# App', //                   0
-  '## [x] Current state', //    1
+  '## [x] Built', //            1
   '@src/store.ts', //           2
   '  : Store', //               3
   '    - items: Todo[]', //     4
@@ -244,9 +176,18 @@ const claimed = claims(parseOutline([
   '@src/store.ts', //           13
   '  - planned()', //           14
 ].join('\n')));
-assert.deepStrictEqual(claimed.map((c) => `${c.line} ${c.path} ${c.name}`),
-  ['3 src/store.ts Store', '5 src/store.ts save', '6 src/store.ts load', '11 src/main.ts main'],
-  'types and methods of done steps, not fields, + units or open steps');
+assert.deepStrictEqual(claimed.map((c) => `${c.line} ${c.path} ${c.name}${c.newFile ? ' new' : ''}`),
+  ['3 src/store.ts Store', '5 src/store.ts save', '6 src/store.ts load', '8 src/new.ts fresh new', '11 src/main.ts main', '14 src/store.ts planned'],
+  'types and methods under every unit, not fields');
+// What the step adds to the code: a name its @ file doesn't have, or anything in a + unit.
+const [store, , , fresh, , planned] = claimed;
+const code = new Set(['Store', 'save']);
+assert.ok(!isNew(store, code), 'a method that exists in its @ file is never colored as new');
+assert.ok(isNew(fresh, undefined), 'every method under a +unit is new, without asking a language server');
+assert.ok(isNew(planned, code) && !isNew(planned, undefined), 'a name the file lacks is new; no symbols is no verdict');
+// The unit a new line lists members of: under the unit or one of its types, not on a logic line.
+const members = ['## Step', '@src/store.ts', '  : Store', '    - sa', '  - lo', '    - read the ', '+src/new.ts', '  - ', '- top'].join('\n');
+assert.deepStrictEqual([3, 4, 5, 7, 8, 0].map((l) => unitAbove(members, l)), ['src/store.ts', 'src/store.ts', undefined, 'src/new.ts', undefined, undefined]);
 assert.deepStrictEqual(['Add(double, double)', '(*Book).Save', 'List<T>', 'Store.save', ' main '].map(symbolName),
   ['Add', 'Save', 'List', 'save', 'main']);
 
@@ -269,19 +210,4 @@ const sections = '# Spec\n## [x] Current state\n@a.go\n\n## Export\n@b.go\n  - S
 assert.deepStrictEqual(stepSection(sections, 'Export'), { line: 4, done: false, lines: ['## Export', '@b.go', '  - Save()'] });
 assert.deepStrictEqual(stepSection(sections, 'Done one'), { line: 9, done: true, lines: ['## [x] Done one', '- x'] });
 assert.strictEqual(stepSection(sections, 'Folded away'), undefined);
-// Accepting a step folds it into the snapshot it names, or into a new one.
-const accepted = ['## [x] Export', 'snapshot: handler', '@cmd/handler.go', '  - getExport(w, r)', '    - write CSV', '// decided: all records'];
-assert.strictEqual(snapshotName(accepted), 'handler');
-assert.strictEqual(snapshotName(['## Export', '@a.go']), undefined);
-const created = foldInto(undefined, accepted, 'handler', 'lang: go');
-assert.ok(created.startsWith('# handler\nlang: go\n\n## [x] Current state'), created);
-assert.ok(created.includes('@cmd/handler.go\n  - getExport(w, r)\n    - write CSV') && created.includes('// decided: all records'), created);
-assert.ok(!created.includes('## [x] Export') && !created.includes('snapshot: handler'), 'the step and its snapshot: line are folded away');
-// A done step that names its snapshot leaves the spec; one that doesn't, and open steps, stay for the usual fold.
-const draft = 'lang: go\n\n## [x] Export\nsnapshot: handler\n@a.go\n\n## [x] Old style\n@b.go\n\n## Next\n';
-const taken = takeNamed(draft);
-assert.deepStrictEqual(taken.steps, [{ name: 'handler', lines: ['## [x] Export', 'snapshot: handler', '@a.go'] }]);
-assert.strictEqual(taken.text, 'lang: go\n\n## [x] Old style\n@b.go\n\n## Next\n');
-const merged = foldInto('# handler\n\n## [x] Current state\n\n@cmd/handler.go\n  - getIndex()\n', ['## Export', '@cmd/handler.go', '  - getExport(w, r)'], 'handler');
-assert.ok(merged.includes('  - getIndex()\n  - getExport(w, r)'), merged);
 console.log('ok');

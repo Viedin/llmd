@@ -4,8 +4,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { doneLines } from './extension';
-import { allow, commit, nextSteps, openChanges, runKey, runs, send, writeMessage } from './run';
+import { missing } from './code';
+import { doneLines, newRanges } from './extension';
+import { allow, commit, hasRun, nextSteps, openChanges, runKey, runs, send, writeMessage } from './run';
 import { execFileSync } from 'child_process';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -39,7 +40,7 @@ export async function run() {
   await checkHighlighting();
   await checkEnter();
   await checkSymbols();
-  await checkDrift();
+  await checkCode();
   await checkRun();
   console.log('e2e ok');
 }
@@ -185,10 +186,10 @@ async function checkCodeLens() {
   const { doc } = await openTemp('lens.llmd', '# Calc\n## [x] Basic\n## More input\n### Notes\n## [ ] Fix it');
   const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
   assert.deepStrictEqual(lenses.map((l) => [l.range.start.line, l.command?.command, l.command?.arguments?.[1]]), [
-    [1, 'llmd.accept', 'Basic'],
+    [1, 'llmd.done', 'Basic'],
     [2, 'llmd.implement', 'More input'], [2, 'llmd.plan', 'More input'],
     [4, 'llmd.implement', 'Fix it'], [4, 'llmd.plan', 'Fix it'],
-  ], 'Implement and Plan show on open ## steps, Accept on done ones');
+  ], 'Implement and Plan show on open ## steps, Done on ticked ones the code backs');
 }
 
 async function checkTypes() {
@@ -207,36 +208,66 @@ async function checkTypes() {
   assert.strictEqual(semantic.data.length / 5, 2, 'int and book are colored as types');
 }
 
-async function checkDrift() {
+// The plan knows the code: what a step adds, the real methods, their hovers, where they are, and whether a ticked step is built.
+async function checkCode() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-'));
   const code = vscode.Uri.file(path.join(dir, 'store.ts'));
-  fs.writeFileSync(code.fsPath, 'export class Store {\n  save() {}\n}\nexport function load() {}\n');
-  // Wait for the TypeScript server, so the spec's first check gets an answer.
+  fs.writeFileSync(code.fsPath, 'export class Store {\n  /** Writes the store to disk. */\n  save() {}\n}\nexport function load() {}\n');
+  // Wait for the TypeScript server, so the spec's first look at the code gets an answer.
   for (let i = 0; i < 60; i++) {
     const found = await vscode.commands.executeCommand<unknown[] | undefined>('vscode.executeDocumentSymbolProvider', code);
     if (found?.length) break;
     await sleep(250);
   }
-  const file = path.join(dir, 'drift.llmd');
+  const file = path.join(dir, 'plan.llmd');
   fs.writeFileSync(file, [
-    '## [x] Current state',
-    '@store.ts',
-    '  : Store',
-    '    - save()',
-    '    - remove()',
-    '  - load()',
-    '## Open',
-    '@store.ts',
-    '  - planned()',
+    '## Grow the store', // 0
+    '@store.ts', //         1
+    '  : Store', //         2
+    '    - save()', //      3
+    '    - remove()', //    4
+    '  - load()', //        5
+    '  - ', //              6
+    '+extra.ts', //         7
+    '  - made()', //        8
+    '## [x] Built', //      9
+    '@store.ts', //         10
+    '  - gone()', //        11
   ].join('\n'));
   const spec = await vscode.workspace.openTextDocument(file);
   await vscode.window.showTextDocument(spec);
-  let drift: string[] = [];
-  for (let i = 0; i < 40 && drift.length === 0; i++) {
+  assert.deepStrictEqual((await newRanges(spec)).map((r) => spec.getText(r)), ['remove', 'made', 'gone'],
+    "what the code doesn't have yet is new, what it has isn't");
+
+  const list = await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', spec.uri, new vscode.Position(6, 4));
+  const label = (i: vscode.CompletionItem) => (typeof i.label === 'string' ? i.label : i.label.label);
+  assert.ok(['Store', 'save', 'load'].every((n) => list.items.some((i) => label(i) === n)), `real completions: ${list.items.map(label).join(', ')}`);
+  assert.strictEqual(list.items.find((i) => label(i) === 'load')?.insertText, 'load()', 'a function goes in as a method line');
+
+  const hover = async (line: number, col: number) => (await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', spec.uri, new vscode.Position(line, col)))
+    .flatMap((h) => h.contents).map((c) => (typeof c === 'string' ? c : c.value)).join('\n');
+  assert.ok((await hover(3, 7)).includes('Writes the store to disk'), 'the real hover, doc comment and all');
+  assert.ok((await hover(4, 7)).includes('has no `remove` yet'), 'a new method says so');
+
+  const found = await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>('vscode.executeDefinitionProvider', spec.uri, new vscode.Position(5, 5));
+  const first = found[0];
+  const [uri, range] = 'targetUri' in first ? [first.targetUri, first.targetRange] : [first.uri, first.range];
+  assert.deepStrictEqual([uri.fsPath, range.start.line], [code.fsPath, 4], 'Ctrl+click opens the method in its file');
+
+  // A ticked step is done once the code has what it lists.
+  const lens = async () => (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', spec.uri))
+    .find((l) => l.range.start.line === 9)?.command?.title;
+  assert.strictEqual(await lens(), "$(warning) Not in the code yet: store.ts has no 'gone'");
+  assert.deepStrictEqual(await missing(vscode.Uri.file(dir), ['## [x] X', '+extra.ts', '  - made()']), ["extra.ts doesn't exist"]);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(code, new vscode.Position(5, 0), 'export function gone() {}\n');
+  await vscode.workspace.applyEdit(edit);
+  let title: string | undefined;
+  for (let i = 0; i < 40 && title !== '$(check) Done'; i++) {
     await sleep(250);
-    drift = vscode.languages.getDiagnostics(spec.uri).map((d) => d.message).filter((m) => m.includes('has no'));
+    title = await lens();
   }
-  assert.deepStrictEqual(drift, ["store.ts has no 'remove'"], "a done step's missing method warns; an open step's doesn't");
+  assert.strictEqual(title, '$(check) Done', 'the code backs the tick now');
 }
 
 // A fake agent stands in for claude: it logs its arguments, ticks the step in the spec like the real one would,
@@ -246,7 +277,7 @@ async function checkRun() {
   const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-agent-')); // outside the project, so not one of its changes
   const log = path.join(tools, 'args.log');
   const agent = path.join(tools, 'agent.js');
-  const file = path.join(dir, '.llmd', 'drafts', 'run.llmd');
+  const file = path.join(dir, '.llmd', 'run.llmd');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(agent, `
     const fs = require('fs');
@@ -255,7 +286,7 @@ async function checkRun() {
     fs.appendFileSync(${JSON.stringify(path.join(dir, 'a.ts'))}, 'export const built = true;\\n');
     fs.writeFileSync(${JSON.stringify(path.join(dir, 'b.ts'))}, 'export const b = 2;\\n'); // not an Edit: a command made it
     const first = fs.readFileSync(${JSON.stringify(log)}, 'utf8').trim().split('\\n').length === 1;
-    fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace('## Build it', '## [x] Build it\\nsnapshot: demo').replace('? which one', '// decided: this one'));
+    fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace('## Build it', '## [x] Build it').replace('? which one', '// decided: this one'));
     for (const e of [
       { type: 'system', subtype: 'init', session_id: 'fake-1' },
       { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello from **the agent**' }] } },
@@ -323,8 +354,8 @@ async function checkRun() {
     await send(run, 'and now?');
     await done();
     const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]);
-    assert.ok(!calls[0].includes('--resume') && calls[0].at(-1)!.startsWith('implement the step "Build it" in .llmd/drafts/run.llmd. ') &&
-      calls[0].at(-1)!.includes("don't fold it"), `first run: ${calls[0]}`);
+    assert.ok(!calls[0].includes('--resume') && calls[0].at(-1)!.startsWith('implement the step "Build it" in .llmd/run.llmd. ') &&
+      calls[0].at(-1)!.includes('leave it in the spec'), `first run: ${calls[0]}`);
     assert.ok(calls[1].join(' ').includes('--resume fake-1') && calls[1].at(-1)!.startsWith('and now?'), `a message resumes the step's session: ${calls[1]}`);
     assert.strictEqual(run.messages.length, 4, 'the message and its answer join the same run');
 
@@ -335,38 +366,53 @@ async function checkRun() {
     const third = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[])[2];
     assert.ok(!third.includes('--resume') && third.at(-1)!.startsWith('plan the step "Later"'), `each step starts its own chat: ${third}`);
 
-    // Accept folds the built step into the snapshot the agent named, and takes it out of the draft.
-    await vscode.commands.executeCommand('llmd.accept', uri, 'Build it');
-    const snapshot = fs.readFileSync(path.join(dir, '.llmd', 'snapshots', 'demo.llmd'), 'utf8');
-    assert.ok(snapshot.startsWith('# demo\nlang: typescript\n\n## [x] Current state') && snapshot.includes('@a.ts') && snapshot.includes('// decided: this one'), snapshot);
+    // Done takes the ticked step out of its spec, since the code has what it lists: a.ts.
+    await vscode.commands.executeCommand('llmd.done', uri, 'Build it');
     const left = fs.readFileSync(file, 'utf8');
-    assert.ok(!left.includes('Build it') && left.includes('## Later'), `the accepted step leaves the draft: ${left}`);
-    assert.strictEqual(runs.get(key)!.accepted, '.llmd/snapshots/demo.llmd');
+    assert.ok(!left.includes('Build it') && left.includes('## Later'), `the done step leaves the spec: ${left}`);
+    assert.ok(runs.get(key)!.done);
 
-    // Claude writes the commit message, and Commit takes only the step's files: not notes.txt, the draft or your
+    // Claude writes the commit message, and Commit takes only the step's files and its spec: not notes.txt or your
     // Claude permissions. Then the open steps are there to go on with.
     const message = await writeMessage(runs.get(key)!);
     assert.strictEqual(message, 'Build it\n\nWith a body.', 'the message without its fences');
     await commit(runs.get(key)!, message!);
     assert.deepStrictEqual(git('show', '--name-only', '--format=%s', 'HEAD').toString().trim().split('\n').filter(Boolean),
-      ['Build it', '.llmd/snapshots/demo.llmd', 'a.ts', 'b.ts']);
+      ['Build it', '.llmd/run.llmd', 'a.ts', 'b.ts']);
     assert.strictEqual(runs.get(key)!.committed?.replace(/^\w+ /, ''), 'Build it');
-    assert.deepStrictEqual(await nextSteps(vscode.Uri.file(dir)), [{ spec: uri.toString(), step: 'Later', where: 'new feature' }]);
+    assert.deepStrictEqual(await nextSteps(vscode.Uri.file(dir)), [{ spec: uri.toString(), step: 'Later', where: 'run.llmd' }]);
 
-    // Accepting a step the agent didn't tick asks it to finish the step first; this fake agent never does, so nothing folds.
+    // Done on a step Claude hasn't ticked does nothing: it stays where it is.
     const later = runs.get(runKey(uri, 'Later'))!;
-    await vscode.commands.executeCommand('llmd.accept', uri, 'Later');
-    for (let i = 0; i < 100 && (later.child || later.finishing); i++) await sleep(100);
-    const last = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]).at(-1)!;
-    assert.ok(last.at(-1)!.startsWith('I accept the step "Later" in .llmd/drafts/run.llmd as you built it.') && last.join(' ').includes('--resume'), `${last}`);
-    assert.ok(!later.accepted && fs.readFileSync(file, 'utf8').includes('## Later'), 'an unticked step stays where it is');
+    await vscode.commands.executeCommand('llmd.done', uri, 'Later');
+    assert.ok(!later.done && fs.readFileSync(file, 'utf8').includes('## Later'), 'an unticked step stays where it is');
 
-    // Claude folding a ticked step itself, with llmd snapshot, accepts it too, even with the deleted draft's editor open.
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Later', '## [x] Later\nsnapshot: demo'));
+    // A ticked step taken out of the spec by hand is done too.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Later', '## [x] Later'));
     for (let i = 0; i < 50 && !later.last?.[0].includes('[x]'); i++) await sleep(100);
-    fs.rmSync(file);
-    await vscode.commands.executeCommand('llmd.accept', uri, 'Later');
-    assert.strictEqual(later.accepted, '.llmd/snapshots/demo.llmd', 'Accept on a step that was folded already');
+    fs.writeFileSync(file, 'lang: typescript\n');
+    await vscode.commands.executeCommand('llmd.done', uri, 'Later');
+    assert.ok(later.done, 'Done on a ticked step that was taken out already');
+
+    // A new step with a done step's title is its own step: no Run lens to the old review, and Implement starts a fresh chat.
+    fs.writeFileSync(file, 'lang: typescript\n\n## Build it\n@a.ts\n');
+    assert.ok(!hasRun(uri, 'Build it'), 'a done run is history');
+    await vscode.commands.executeCommand('llmd.implement', uri, 'Build it');
+    await done();
+    const again = runs.get(key)!;
+    const restarted = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]).at(-1)!;
+    assert.ok(!restarted.includes('--resume') && !again.done && again.messages.length === 2, `a fresh run and session: ${restarted}`);
+
+    // Done on a spec's last step deletes the spec too, and the commit leaves out a deleted spec git never tracked.
+    const once = path.join(dir, '.llmd', 'once.llmd');
+    fs.writeFileSync(once, '# Once\n\n## [x] Once\n@a.ts\n');
+    await vscode.commands.executeCommand('llmd.done', vscode.Uri.file(once), 'Once');
+    assert.ok(!fs.existsSync(once), 'a spec with no steps left is gone');
+    const onceRun = runs.get(runKey(vscode.Uri.file(once), 'Once'))!;
+    for (let i = 0; i < 50 && !onceRun.diffs; i++) await sleep(100); // the run's tab reads them when it opens
+    await commit(onceRun, 'Once');
+    const shownOnce = git('show', '--name-only', '--format=%s', 'HEAD').toString().trim().split('\n');
+    assert.ok(shownOnce[0] === 'Once' && shownOnce.includes('a.ts') && !shownOnce.includes('.llmd/once.llmd'), shownOnce.join(', '));
   } finally {
     await settings.update('agentCommand', undefined, vscode.ConfigurationTarget.Global);
   }

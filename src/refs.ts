@@ -6,7 +6,8 @@ export interface Ref {
 }
 
 // shortcut: paths can't contain spaces; add @"quoted path" syntax if you need them.
-const REF = /(?<![\w@])@([\w\-./]+)/g;
+// A ~@path is a removal: that file is meant to be gone, so it's no reference.
+const REF = /(?<![\w@~])@([\w\-./]+)/g;
 
 // Finds @path references outside fenced code blocks.
 export function findRefs(text: string): Ref[] {

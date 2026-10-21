@@ -1,4 +1,4 @@
-import { OutlineNode } from './outline';
+import { OutlineNode, TYPE, UNIT } from './outline';
 
 export interface Declared {
   kind: 'type' | 'unit';
@@ -18,19 +18,38 @@ export interface Claim {
   path: string;
   name: string;
   line: number;
+  newFile: boolean; // under a + unit
 }
 
-// What done steps promise the code has: the types and methods under their @ units.
-// Open steps and + units promise nothing yet; fields are left out because many languages don't list them as symbols.
+// The types and methods the spec lists under its units, which the code either has or is going to get.
+// Fields are left out because many languages don't list them as symbols.
 export function claims(nodes: OutlineNode[]): Claim[] {
-  const walk = (nodes: OutlineNode[], done: boolean): Claim[] => nodes.flatMap((n) => {
-    if (n.kind === 'heading') return walk(n.children, done || n.detail === 'done');
-    if (n.kind !== 'unit' || !done || n.detail === 'new file') return [];
+  return nodes.flatMap((n) => {
+    if (n.kind === 'heading') return claims(n.children);
+    if (n.kind !== 'unit') return [];
     const inside = (nodes: OutlineNode[]): Claim[] => nodes.flatMap((c) =>
-      c.kind === 'type' || c.kind === 'method' ? [{ path: n.name, name: c.name, line: c.line }, ...inside(c.children)] : []);
+      c.kind === 'type' || c.kind === 'method' ? [{ path: n.name, name: c.name, line: c.line, newFile: n.detail === 'new file' }, ...inside(c.children)] : []);
     return inside(n.children);
   });
-  return walk(nodes, false);
+}
+
+// Whether a claim is something the step adds: everything in a + unit, or a name its @ file's symbols don't have.
+// No symbols, as when the language has no extension, is no verdict: not new.
+export const isNew = (c: Claim, names?: { has(name: string): boolean }) => c.newFile || (!!names && !names.has(c.name));
+
+// The unit whose members `line` lists, directly or under one of its types: its path, or undefined on a logic line or
+// outside a unit.
+export function unitAbove(text: string, line: number): string | undefined {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
+  let indent = lines[line].search(/\S/);
+  for (let i = line - 1; i >= 0 && indent > 0; i--) {
+    const at = lines[i].search(/\S/);
+    if (at < 0 || at >= indent) continue;
+    const unit = lines[i].match(UNIT);
+    if (unit) return unit[2];
+    if (!TYPE.test(lines[i])) return undefined;
+    indent = at;
+  }
 }
 
 // The candidate a typo most likely meant, ignoring case: at most 1 edit away for names up to 4 letters, 2 for longer ones.

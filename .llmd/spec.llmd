@@ -2,572 +2,99 @@
 lang: typescript
 
 // Spec for this extension, written in its own format. Format rules: @skills/llmd/SKILL.md
+// The plan is intent, the code is the proof: a step says what to change, and once it's built it leaves the spec.
 
-## [x] Current state
-
-@src/refs.ts
-  - findRefs(text: string) -> Ref[]
-    - skip lines inside fenced code blocks
-    - match @path not preceded by a word char, trim a trailing sentence dot
-  - projectOf(file: string) -> string | undefined
-    - the folder that holds the nearest .llmd/ folder above the file, or undefined
-
-@src/outline.ts
-  : OutlineNode
-    - kind: 'heading' | 'unit' | 'type' | 'method' | 'field'
-    - name: string
+## [x] The plan knows the code
+@src/code.ts
+  : CodeSymbol
+    - kind: vscode.SymbolKind
     - detail: string
-    - line: number
-    - endLine: number
-    - children: OutlineNode[]
-  - parseOutline(text: string) -> OutlineNode[]
-    - skip lines inside fenced code blocks
-    - headings nest by level; units go under the nearest heading
-    - types go under their unit; methods and fields under their type, or the unit when there is no type
-    - lines indented under a method are logic, not symbols
-    - endLine is the last line that belongs to the node, so the breadcrumbs follow the cursor
-    - a heading's [ ] or [x] box is not part of its name; a done step's detail is "done"
-    - a "- : Name" line is a type, like ": Name"
-  - openSteps(text: string) -> { title: string; line: number }[]
-    - every "##" heading from parseOutline that isn't done, with its title and line
-  - export the UNIT, TYPE, METHOD and FIELD patterns, so the fold keys lines the same way the outline does
-  - stepSection(text: string, title: string) -> { line: number; done: boolean; lines: string[] } | undefined
-    - the step's heading line, its tick, and its lines down to the next # or ## heading, without trailing blank lines
-    - undefined once the step is gone, which after a run means it was folded
+    - at: vscode.Location
+  - symbolsOf(uri: vscode.Uri) -> Promise<Map<string, CodeSymbol> | undefined>
+    - a file's symbols by plain name, from its language's extension: the top level and the members of classes and the like
+    - kept until the file changes; no answer isn't kept
+  - codeHover(at: vscode.Location) -> Promise<vscode.MarkdownString | undefined>
+    - the hover the file's own language shows on the symbol: signature and doc comment
+  - watchCode(context: vscode.ExtensionContext)
+    - forgets a file's symbols when it changes in an editor or on disk, and fires onDidChangeCode once things settle
 
 @src/symbols.ts
-  : Declared
-    - kind: 'type' | 'unit'
-    - line: number
-    - members: Map<string, number>
-  : Call
-    - name: string
-    - member: string
-    - line: number
-    - start: number
-    - end: number
-  - indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
-    - every type by its name, every unit by its file name without extension, so src/refs.ts is "refs"
-    - members are the methods, fields and types directly under it, mapped to their line
-    - units with the same path share their members
-    - a type wins over a unit with the same name, so type book in book.go is a type
-  - findCalls(text: string) -> Call[]
-    - every Name.member outside fenced code blocks and outside @ and + paths
-    - start and end are the columns of the whole Name.member
-  - builtinTypes(text: string) -> string[]
-    - the everyday built-in types for the spec's "lang:" line, or every language's when it has none
-  - inTypePosition(line: string, col: number) -> boolean
-    - after "- name:" in a field, or after the name in "- name(...)"
-  - typeSpans(text: string, nodes: OutlineNode[]) -> { line: number; start: number; end: number }[]
-    - built-in and declared type names in field types and method signatures; skip qualified names like time.Time
-  : Claim
-    - path: string
-    - name: string
-    - line: number
   - claims(nodes: OutlineNode[]) -> Claim[]
-    - every type and method declared under an @ unit of a done step, with the unit's path and the declaring line
-    - + units are skipped: in a done step they should have become @ already
-  - symbolName(name: string) -> string
-    - a code symbol's plain name: "Add(double, double)", "(*Book).Save" and "List<T>" become "Add", "Save" and "List"
-  // decided: types and methods only
-  // fields are risky: Python attributes and Go embedded fields often aren't document symbols
-  - closest(name: string, candidates: Iterable<string>) -> string | undefined
-    - the candidate a typo most likely meant, ignoring case: at most 1 edit away for names up to 4 letters, 2 for longer ones
+    - the types and methods under every unit, not only done steps', with newFile for a + unit
+  - isNew(c: Claim, names?) -> boolean
+    - everything in a + unit, or a name its @ file's symbols don't have; no symbols is no verdict
+  - unitAbove(text: string, line: number) -> string | undefined
+    - the unit whose members the line lists, directly or under one of its types; undefined on a logic line
 
 @src/extension.ts
-  - activate(context: vscode.ExtensionContext)
-    - warn on @refs that don't exist, using refs.findRefs
-    - make @refs to files Ctrl+clickable
-    - complete files and folders after @ and /, one folder level at a time
-    - dim [x] methods and their logic lines, using doneLines
-    - show outline.parseOutline as document symbols, using toSymbols
-    - register findDefinition, completeNames and callProblems next to the other providers and warnings
-    - resolve @paths from refs.projectOf when the spec is in .llmd/, else from the workspace folder as before
-    - show a "▶ Implement" code lens on every openSteps step
-    - on Enter on an empty "- " line, outdent one level and keep the "- "; at the outermost level, remove the bullet
-    - color symbols.typeSpans as semantic "type" tokens, with semantic highlighting on for llmd
-    - right after @ or a line-start +, offer every file and folder in the project, skipping .git, node_modules and build output
-    - after a "/", keep walking one folder level at a time
-    - add driftProblems to the spec's warnings
-    - rerun it when the spec opens and whenever any file is saved
-    - no drift warnings for specs in .llmd/archive/: they describe the code as it was
-    - a "Plan" code lens next to "▶ Implement" on every open step, running the hidden llmd.plan command
-    - Implement and Plan run run.runStep on the step
-    - a step with a run gets a "Run" code lens back to it, "Working…" while the agent works
-    - an "Accept" code lens on each ticked step besides Current state
-  - doneLines(text: string) -> number[]
-    - lines of [x] methods plus the deeper-indented lines under them
-    - also every line of a done step, down to the next heading of the same or a higher level
-    - headings inside fenced code blocks don't count
-  - toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument) -> vscode.DocumentSymbol[]
-    - heading, unit, type, method, field become String, File, Class, Method and Field symbols
-    - method detail is its signature, like "(dir string) -> error"; a + unit's detail is "new file"
-    - an empty "## " heading is named "…", since a symbol needs a name
-  - findDefinition(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.Location | undefined
-    - on the member part of Name.member, go to the member; on a declared name, go to its declaration
-  - completeNames(doc: vscode.TextDocument, pos: vscode.Position) -> vscode.CompletionItem[]
-    - after "Name." offer that name's members
-    - otherwise offer every declared name: types as classes, units as files
-    - nothing inside @ and + paths
-    - in a type position, offer declared types first, then symbols.builtinTypes; ":" also triggers it
-  - callProblems(doc: vscode.TextDocument) -> vscode.Diagnostic[]
-    // unit names aren't checked: prose like "extension.ts" would look like a call
-    - warn only when the member is a likely typo of a declared one, and suggest it: "Debouncer has no member 'Pussh'. Did you mean 'Push'?"
-    // inherited members like DbContext.Database and file names like BookService.cs in prose aren't typos
-  - enter(editor: vscode.TextEditor)
-    - an empty "* " line steps out like an empty "- ", keeping its "* "
-    - an empty "! " line steps out like an empty "- ", keeping its "! "
-  - driftProblems(doc: vscode.TextDocument) -> Promise<vscode.Diagnostic[]>
-    - group symbols.claims by path; for each file, get its symbols with vscode.executeDocumentSymbolProvider
-    - flatten the symbol tree to names, without parameter lists or receivers, so "Add(double, double)" and "(*Book).Save" become "Add" and "Save"
-    - warn "<path> has no '<name>'" on the declaring line when the name isn't there
-    - no warnings for a file whose language has no symbol provider: no answer isn't the same as a missing symbol
-  // decided: names only; language servers format parameters too differently to compare
-  // decided: on open and on save, not while typing
-  // after the Snapshot step, done steps are folded away, so this checks Current state
-  ! with llmd.agentCommand set to a fake agent, Implement opens the step's run in the spec's column, streams in the reply, and keeps the step as it was
-  ! a message resumes the step's session, and another step starts its own
+  - newRanges(doc: vscode.TextDocument) -> Promise<vscode.Range[]>
+    - the names isNew says the step adds, colored with gitDecoration.addedResourceForeground
+  - hover(doc: vscode.TextDocument, pos: vscode.Position)
+    - the real hover on a type or method the code has, "New: ... has no X yet" on one it doesn't
+  - findDefinition(doc: vscode.TextDocument, pos: vscode.Position)
+    - a type or method the code has opens in its file; a name in a logic line still goes to the spec
+  - completeNames(doc: vscode.TextDocument, pos: vscode.Position)
+    - a new "- " line under a unit offers codeCompletions of its file
+  - codeCompletions(doc: vscode.TextDocument, unit: string)
+    - the file's real types and methods, written the spec's way: "save()" and ": Store"
+  - resolveCompletion(item: vscode.CompletionItem)
+    - a picked completion gets the symbol's codeHover as its docs
+  ! a method that exists in its @ file is never colored as new
+  ! every method under a +unit is new, without asking a language server
+  // start from symbolsOf: the drift check already asks the file's language server for its symbols
 
-@language-configuration.json
-  - on Enter after a unit, type or method line, indent one level and start the line with "- "
-  - on Enter after any other "- " line, start a "- " at the same indent
-  - on Enter after a "- : Name" line, indent one level and start the line with "- "
-  - on Enter after a "* " line, start a "* " at the same indent
-  - on Enter after a "! " line, start a "! " at the same indent
+## [x] Done is proven by the code
+~@src/snapshot.ts
+~@src/cli.ts
+  // the CLI only had llmd snapshot
+~@.npmignore
 
-@syntaxes/llmd.tmLanguage.json
-  - color @path and +path unit lines like file names
-  - color ": Name" lines like type names
-  - color "? ..." lines like warnings and "// ..." lines like comments
-  - markdown headings, code blocks and inline markdown for everything else
-  // decided: LLMD lines win over markdown; tables, quotes and numbered lists lose markdown colors
-  - color "- : Name" like ": Name"
-  - color "* ..." lines with a scope of their own, so they stand out from logic and ? lines
-  - color "! ..." lines: the "!" like a keyword, the text with a scope of its own; @refs and inline markdown still work inside
+@src/code.ts
+  - missing(root: vscode.Uri, lines: string[]) -> Promise<string[]>
+    - every unit has to exist, and every type and method its file's symbols can vouch for
 
-@src/test.ts
-  - check findRefs, parseOutline, indexSymbols and findCalls on small specs
-  - check step names and the "done" detail in the outline
-  - check projectOf with / and \ paths, nested folders, and a spec outside .llmd/
-  - check "- : Name" in the outline, typeSpans, builtinTypes and inTypePosition
-  - check fold: new unit, merged method, + to @, ~ removals, decided lines, open steps untouched
-  - check claims: done vs open steps, @ vs + units, types and methods
-  - check closest: a typo, a case slip, nothing close, short names
-  - check fold keeps "!" lines under a method and drops step-level ones to the archive
-  - check openSteps, and stepPrompt for both modes
-  - check agentArgs with and without a session, and render on a recorded stream: text, tool calls, a denial, an error
-  - check stepSection on an open step, a done one and a folded one, and that render keeps the edited file
-  - check agentArgs without the snapshot allowance, snapshotName, foldInto into a new and an existing snapshot, and takeNamed
-  - check allowRules on a compound command, a pipe and another tool, and that a denial carries its rules
-
-@src/e2e.ts
-  - in a real VS Code: warnings, links, @ completion, colors, Enter, dimming and the outline
-  - go to definition, "Name." completion and a typo warning
-  - check that a done step and its subsections are dimmed, and an open step isn't
-  - check that Implement shows on open ## steps only
-  - check Enter after a logic line, then stepping out twice from an empty bullet
-  - check "- : Name" coloring, type completion, semantic tokens and @ finding a nested file
-  - check "* " coloring and Enter after a "* " line
-  - a done step listing a function missing from a TypeScript file gets a warning; one that exists doesn't
-  - an open step listing a missing function gets no warning
-  - the typo warning suggests the declared member; an undeclared member that isn't a typo doesn't warn
-  - check that Plan shows next to Implement on open steps only
-  - check "! " coloring and Enter after a "! " line
-  - Implement with a fake agent that ticks the step opens its run in the spec's column and streams the reply; a message resumes it, and another step gets its own session
-  - Accept shows on done steps; the run test's spec is a draft, its fake agent names a snapshot, and Accept folds into it
-  - in a git repository, the fake agent's edit shows as a one-line diff; Allow adds its rule next to what the settings had
-  - Accept on a step the agent didn't tick asks it to finish the step, and leaves the step alone when it doesn't
-
-@skills/llmd/SKILL.md
-  - "## [ ] Title" is a step and "## [x] Title" is a done step
-  - "implement the next step" means the first unticked step from the top; touch only what it lists
-  - a ? blocks only the step it sits in; text above the first step is context for every step
-  - tick the step once all of it is built and builds; don't add [x] to methods
-  - in a git repo, offer to commit a finished step with its title as the message
-  - when describing existing code as llmd, put it all in one "## [x] Existing code" step
-  - look for specs in .llmd/ when the user names none; ask if there are several; write new specs there
-  - "## Title" is an open step, same as "## [ ] Title"; ticking makes it "## [x] Title"
-  - "- : Name" and folder units in the syntax table
-  - before a step, skim the ## step titles and ticks of the other specs in .llmd/
-  - open another spec in full only when a search for this step's paths finds it; raise conflicting open steps as questions
-  - after ticking a step, run "llmd snapshot <spec>"; if llmd isn't installed, say so and leave the step ticked
-  - "~" lines in a step mean remove; describing existing code writes "## [x] Current state"
-  // decided: fold right after each tick
-  - "* line" in the syntax table: a requirement the agent designs itself, under a unit, a type, a method or the step
-  - for "*" lines, decide instead of asking; ask only at a real fork, like two designs with different trade-offs
-  - before ticking, replace each "*" line with the "-" lines it built: units, types, signatures and short logic
-    - the user's wording survives in the archive, so nothing is lost
-  - this replacement is one more spec edit the agent may make on its own
-  - the report lists the decisions it made for "*" lines, so the user can review the design along with the diff
-  // decided: a "*" line at step level lets the agent choose the files; the report lists them
-  // decided: build, then report the decisions; no design approval first
-  - before ticking, make sure the step, once folded, describes the code as it really is
-    - add "~" lines for anything in Current state the step's code changed or removed
-    - a line with parentheses is read as a method; write a record's or class's data as fields
-  - adding those "~" lines is one more spec edit the agent may make on its own
-  - "plan the step" reads like implementing, then discusses: what's unclear, what's missing, what clashes with the code or other specs
-  - it proposes concrete spec edits (? lines, new lines, new steps) and makes them only once the user agrees; it never writes code
-  - "! line" in the syntax table: a check that must hold once the step is built, under a unit, type, method or the step
-  - before ticking, verify every "!" line in the step: as a test when the project has tests, else by running or reading the code
-  - don't tick while a check fails; report it instead
-  - the report lists each check and how it was verified
-  - planning suggests "!" lines for what the step should prove
-  // decided: the agent never rewrites "!" lines; they're the user's, unlike "*" lines
-  - specs are one per feature, plus app.llmd for shared setup like startup, the db context and auth
-  - a shared file appears in every spec that adds to it, each listing only its own feature's part
-  - a step goes in the spec of the feature it's for, even when it touches another feature's files
-  - with several specs and none named, use the one the request points to ("the next book step"), else ask
-  - describing existing code writes one spec per feature plus app.llmd, each with its own Current state; one spec is fine when there are no clear features
-  - drafts and snapshots: a draft holds one new step; the snapshots are each feature's Current state and the step's context
-  - before ticking, add "snapshot: <feature>" under the step's heading: the snapshot it extends, or a new name
-  - llmd snapshot folds a named step into its snapshot; when the prompt says the user accepts, don't fold
-  - "snapshot:" in the syntax table, and one more spec edit the agent may make on its own
-
-@README.md
-  - a landing page: pitch, a short example, install, quick start, contributing and license
-  - how to install the extension, the skill and the CLI
-  - links to the guide by absolute GitHub URL, so they also work in the packaged extension
-  - the extension bullet says Implement turns the editor into the step's run
-  - the quick start writes the step with New feature and ends with Accept
-
-@docs/guide.md
-  - the in-depth how-to, moved out of the README, with a contents list at the top
-  - specs go in .llmd/, with a tip on gitignoring it per repo or globally
-  - steps without [ ], and prompts that don't need the spec's path
-  - describe the new Enter behaviour
-  - "- : Name", folder units, @ search and type help
-  - say the agent skims the other specs, and asks about conflicting open steps
-  - install the CLI with npm link, the snapshot, ~ lines, and redoing a step as a new step
-  - the suggested AGENTS.md line points at Current state as the architecture; Claude Code gets a CLAUDE.md that imports it
-  - how to write a spec, with every line type and an example
-  - how to work with the agent from a spec: implement, answer ? questions, review, snapshot and commit
-  - explain steps: how to write them, "implement the next step", ticking, and a commit per step
-  - "* line" in the line types table, and a section on handing decisions to the agent, with an example mixing "*" and "-"
-  - that the agent replaces "*" lines with what it built before the step is folded
-  - drift warnings under Editor help, and that they need the language's extension installed
-  - in Known limits: only names are checked, not signatures or logic
-  - typo warnings only fire for likely typos, and say what was meant
-  - the archive isn't drift-checked
-  - written for any agent: "the agent", not "Claude"
-  - "! line" in the line types table, and a short section on checks with an example
-  - the review list says the agent verified every "!" line
-  - a "One spec per feature" section with a book example and the shared-file rule
-  - the AGENTS.md line points at the Current state of every spec in .llmd/
-  - "llmd snapshot" without a name folds every spec; describe writes one spec per feature plus app.llmd
-  - New feature, drafts, snapshots and Open feature in Start a project; Accept under Runs; snapshot: in the line types; snapshot lines under The snapshot
-  - a section on runs: the live step, Changes from git, the conversation, Allow and Continue, the status, Accept, Edit spec, one session per step, auto mode; claude only for now
-
-@src/agent.ts
-  - stepPrompt(mode: 'implement' | 'plan', step: string, file: string) -> string
-    - implement: 'implement the step "<step>" in <file>'
-    - plan: 'plan the step "<step>" in <file>' plus: discuss it, ask about anything unclear, suggest what to add or change in the spec, write no code
-  - agentArgs(prompt: string, session?: string) -> string[]
-    - "-p --output-format stream-json --verbose", "--resume <session>" when there is one, then "--" and the prompt
-  : Part
-    - kind: 'text' | 'tool' | 'error'
-    - text: string
-    - file: string
-    // only on a tool call that changed a file
-    - allow: string[]
-    // only on a refused tool call: the rules that would let it run
-  - render(event: any, root: string) -> Part[]
-    - an assistant's text as markdown, and a tool call as one line, like "Edit cmd/main.go" or "Bash go build ./..."
-    - the result's permission denials as "Not allowed: ...", and its errors
-    - nothing for thinking, hooks and tool results
-    - a tool call that edits a file keeps the file's path, for the run's Changes
-    - a permission denial carries agent.allowRules for its tool call
-  - allowRules(name: string, input: any) -> string[]
-    - one rule per command in a shell line, in Claude Code's own format: "Bash(go build *)" for "go build ./... && ..."
-    - a second word counts only for tools with subcommands, like go, git, npm or dotnet; any other tool is allowed by its name
-
-@package.json
-  - the llmd.agentCommand setting and the hidden llmd.implement command
-  - use images/file.svg as the llmd language icon, for light and dark themes
-  - images/icon.png as the extension's icon in the Marketplace, Open VSX and the Extensions view
-  - a "bin" entry for llmd, so "npm link" puts it on the PATH
-  - "prepack" compiles, so the release tarball is prebuilt and installing it runs no scripts
-  - the LLMD: New feature and LLMD: Open feature commands, the hidden llmd.run and llmd.accept, and activation when a run's tab is restored
-  - files.exclude hides .llmd/drafts by default
-  - llmd.agentCommand is "claude --permission-mode auto" by default, and says how Allow works
-
-@.npmignore
-  - the npm package is only the CLI: out/cli.js, refs.js, snapshot.js and outline.js
-  - engines.vscode and @types/vscode at 1.93, the first version with terminal shell integration events
-
-@images/file.svg
-  - a checklist glyph, one ticked box and one open, in purple
-
-@images/icon.svg
-  - the logo: the file.svg glyph, scaled up on a dark rounded tile so it reads on light and dark backgrounds
-  - rendered to images/icon.png at 256px, since the Marketplace and READMEs packaged by vsce don't accept SVG
-
-@src/snapshot.ts
-  : Line
-    - text: string
-    - children: Line[]
-  - fold(text: string) -> { text: string; folded: string[] }
-    - merge every done ## step, top to bottom, into "## [x] Current state", then remove the step
-    - create Current state above the first step when there's none
-    - ### headings inside a step are flattened; its top-level // notes and prose are dropped, except // decided: lines
-    - folded is the removed steps' text, for the archive
-  - merge(into: Line[], from: Line[])
-    - match lines by key: a unit by path, a type, method or field by name, anything else by its text
-    - a new line is appended with its children; + units become @
-    - a matching symbol takes the step's signature, then its children merge the same way
-    - a "~" line removes its match: "- ~Stop()", "~@old.go", "- ~walk dir"
-    // a rename is a ~ of the old name plus the new one
-  - key(line: string) -> string
-  // decided: folded steps are appended to .llmd/archive/<spec>.llmd
-  // decided: a step's logic lines are appended, duplicates skipped; old ones stay until a ~ removes them
-  - snapshotName(step: string[]) -> string | undefined
-    - the feature a step's "snapshot: <feature>" line names
-  - foldInto(snapshot: string | undefined, step: string[], title: string, lang?: string) -> string
-    - fold one step into a snapshot's Current state, as done whatever its box says
-    - a new snapshot starts with "# <title>", the lang: line and an empty Current state
-  - takeNamed(text: string) -> { text: string; steps: { name: string; lines: string[] }[] }
-    - take the done steps that name a snapshot out of a spec, for them to fold into it
-
-@src/cli.ts
-  - main(args: string[])
-    - "llmd snapshot [spec]" folds the spec in place, appends the folded steps to .llmd/archive/<spec>.llmd and prints their titles
-    - warn when a folded step still has "*" lines: the agent didn't replace them, so Current state holds prose
-    - without a spec, fold every .llmd file in .llmd/, and say "Nothing to fold" only when none had done steps
-    ! "llmd snapshot" with two specs that each have a done step folds both and archives each under its own name
-    - without a spec, also fold the drafts in .llmd/drafts/
-  - snapshot(spec: string) -> boolean
-    - fold one spec, archive its folded steps and print their titles; false when it had none
-    - a done step with a snapshot: line folds into .llmd/snapshots/<name>.llmd instead, and a draft with no steps left is deleted
-
-// decided: claude only for now, through "claude -p" with stream-json output; other agents can come later
-
-// decided: no terminals; Plan and Implement of a step share its session, and the Plan prompt keeps it from writing code
-
-// decided: each ## step is its own chat, like a migration; once it's built it folds into Current state, the snapshot
-
-// decided: the run opens in the spec's editor group, in front of the spec; Edit spec flips back
+@src/extension.ts
+  - a ✓ Done lens on a ticked step the code backs, "Not in the code yet: ..." on one it doesn't
+  - ~driftProblems(doc), ~driftProblem(doc, c), ~symbolsOf(uri): symbolsOf lives in code.ts now
 
 @src/run.ts
-  - rootOf(uri: vscode.Uri) -> vscode.Uri
-    - the folder holding .llmd/, else the workspace folder, else the spec's folder
-  : Run
-    - spec: vscode.Uri
-    - step: string
-    - messages: Message[]
-    - before: string[]
-    - last: string[]
-    - drafting: boolean
-    - committed: string
-  - openRun(spec: vscode.Uri, step: string) -> Run
-    - open the step's run as a webview tab in the spec editor's column, in front of the spec, or show it again
-  - runStep(mode: 'implement' | 'plan', spec: vscode.Uri, step: string)
-    - agent.stepPrompt, into the step's run
-    - an implement prompt tells the agent to stop at the tick: you accept the step
-  - send(run: Run, text: string)
-    - your message, plus which step it's about and the lines selected in the spec's editor
-    - every message tells the agent not to fold the step or run llmd snapshot
-  - ask(run: Run, text: string, prompt: string)
-    - save the spec and keep the step's lines from before its first run, then run llmd.agentCommand with agent.agentArgs at the project root
-    - each step has its own claude session: its first message starts it, the next ones resume it
-    - stream agent.render's parts into the run, markdown through VS Code's own markdown.api.render
-    - keep each step's session id and its run in the workspace state; forget the session when resuming fails
-    - one agent per step at a time; Stop ends it
-    - when a run ends, read its changes from git before it counts as finished
-    - at the step's first run, keep its git base: snapshot of the working tree
-  - editSpec(run: Run)
-    - back to the spec's editor, in the run's column, at the step
-  - initRuns(context: vscode.ExtensionContext)
-    - keep a run's step live as the spec changes, in the editor or on disk
-    - the LLMD: New feature and LLMD: Open feature commands, the hidden llmd.run and llmd.accept, and a serializer so a run's tab comes back after a reload
-    - a spec deleted or created refreshes its runs too
-  - newFeature()
-    - ask for a name, then write a draft .llmd/drafts/<name>.llmd holding the project's lang: line and "## <name>", and open it under the step
-  - openFeature()
-    - pick a draft to open again, start a new feature, or discard a draft
-  - accept(run: Run)
-    - fold the step, read from disk, into the snapshot its snapshot: line names, or one you pick, with snapshot.foldInto
-    - take the step out of its spec; a draft with no steps left is closed and deleted
-    - a step the agent didn't tick: ask it to make the step describe what it built, add its snapshot: line and tick it, then fold
-    - if it still isn't ticked after that, say so and leave the step where it is
-    - a step that's gone: accepted if it was folded, else say there's nothing to accept
-  ! with a fake agent that ticks the step and names a snapshot, Accept writes .llmd/snapshots/<name>.llmd and takes the step out of the draft
-  - updateDiffs(run: Run)
-    - every file git sees changed between the base and a snapshot of now, .llmd files left out
-    - each file's old and new lines highlighted by its extension
-    - .claude/settings.local.json left out too
-  - allow(run: Run, rules: string[]) -> Promise<boolean>
-    - add the rules to the project's .claude/settings.local.json, keeping what's there; leave a file it can't read alone
-  : Diff
-    - file: string
-    - status: string
-    - old: string[]
-    - new: string[]
-  - snapshot(cwd: string) -> Promise<string | undefined>
-    - git add -A into .git/llmd-index, then git write-tree: the working tree as a tree, ignored files left out
-  - highlight(lines: string[], lang: string) -> Promise<string[]>
-    - one fenced block through markdown.api.render, split back into lines, spans that run over a line closed and reopened
-    - plain past 2000 lines, or when the renderer isn't there
-  - openChanges(run: Run, file?: string)
-    - one file in vscode.diff, all of them in vscode.changes; the old side through the llmd-base scheme, git show <base>:<file>
-  ! a file a command wrote shows up, an untracked file from before the run doesn't, and its code has hljs spans
-  - writeMessage(run: Run) -> Promise<string | undefined>
-    - claude -p with the step, its diff and the last 10 commit subjects for style; the reply without code fences goes into the commit box
-  - commit(run: Run, message: string)
-    - git add -A and git commit -- on the step's paths only; a deleted file git never tracked is left out; a failure says why
-    - keep "<hash> <subject>" on the run
-  - nextSteps(root: vscode.Uri) -> Promise<{ spec, step, where }[]>
-    - the open steps in .llmd/drafts/ and then .llmd/, at most 8
-  ! Commit takes a.ts, b.ts and the snapshot, not notes.txt, the draft or the local Claude settings
-  - specText(uri: vscode.Uri) -> Promise<string | undefined>
-    - the editor's text only while it has unsaved edits, else the file on disk
+  - done(run: Run)
+    - refuses a step that isn't ticked, or that the code doesn't back yet, without waiting on the warning
+    - takes the step out of its spec and keeps the file; the run becomes the step's review
   - post(run: Run)
-    - a ticked step that left its spec is accepted, into the snapshot its snapshot: line names, else its own spec
-  ! Accept on a ticked step whose draft was deleted under its open editor accepts it
+    - a ticked step taken out of the spec by hand is done too
+  - commit(run: Run, message: string)
+    - the step's files and its spec
+  - nextSteps(root: vscode.Uri)
+    - the open steps of the plans in .llmd/
+  - newFeature()
+    - makes a plan in .llmd/<name>.llmd
+  - ~accept(run), ~pickSnapshot(root), ~snapshots(root), ~openFeature()
 
+@package.json
+  - llmd.done in place of llmd.accept; no llmd.openFeature, no hidden drafts folder, no bin or prepack
+
+@.github/workflows/release.yml
+  - releases only llmd.vsix
+// decided: tick + proof: Claude still ticks a built step, and the code has to back the tick; a tick it doesn't back shows what's missing
+// decided: Done opens the run's review, with its changes, the commit and Next
+
+## [x] Refurbish the run tab
 @media/run.js
-  - draw the run: a bar with the step, its status and what you can do next, then the live step and the conversation
-  - the step drawn like the editor, with line numbers and a line diff since the run started: added lines green, removed ones struck
-  - runs of more than three tool calls fold into one "N actions" line
-  - it opens with the step alone, like the editor it replaces, then slides into two columns
-  - Enter sends; while the agent works, Enter keeps your message and the button stops it
-  - Changes: one foldable file each, with its added and removed lines and git's diff, line numbers and hunk headers
-  - outside a git repository, only the edited files' names
-  - Allow on each refused command, "✓ Allowed" once it is, and Continue with what you allowed in the last message
-  - "✓ Accept" in the bar once the agent has had a turn, "into <snapshot>" when it named one; an accepted run says where it went
-  - Changes is a section you fold, with Open all
-  - diff rows use the highlighted lines
-  - Open shows the file's changes in the diff editor
-  - an accepted run: the Changes section moves into the right column in a view transition, every file unfolded
-  - above it, the commit box with Write with Claude and Commit, Cmd/Ctrl+Enter commits; "✓ Committed <hash> <subject>" after
-  - the review starts when you click Accept, also while Claude finishes the step; Commit waits until it's accepted
-  - above the step, Next: each open step opens its run, and New feature
-
+  - status()
+    - Done, "Ticked, not in the code yet", or "Built, review and mark done"
+  - drawBar()
+    - ✓ Done in Accept's place, once the step is ticked and the code backs it
+  - drawStep()
+    - under a ticked step the code doesn't back, the list of what's missing
 @media/run.css
-  - the step and the conversation side by side, stacked in narrow tabs, in VS Code's theme colors
-  - diff rows like the editor's diff colors, tabs four wide
-  - the review column, the commit box and the Next list; no animation with reduced motion
-  - Accept is choreographed in a view transition: the conversation slides out, the changes lift out of the step's column and open up as the main view, then the commit box and Next rise in
+  - .note.missing and ul.missing in the warning color
+// decided: keep the drawn step on the left
 
-// decided: drafts in .llmd/drafts/, hidden from the explorer and search; snapshots in .llmd/snapshots/<feature>.llmd
-
-// decided: the agent picks the snapshot with a "snapshot: <feature>" line when it ticks; you accept, the agent doesn't fold
-
-// decided: nothing is archived for an accepted step; git keeps its text
-
-// decided: claude runs in auto permission mode by default; acceptEdits is the fallback for plans without it
-
-// decided: the diff is against the working tree as the step's first run found it, so earlier uncommitted work stays out
-
-// decided: the base is a git tree of the whole working tree, untracked files in, written through an index of llmd's own
-
-// decided: a run without a base, from before Changes or before git init, counts from the last commit
-
-// decided: the code is highlighted by markdown.api.render, the preview's own highlight.js, and colored by its highlight.css
-
-// decided: the move is the browser's own view transition on the Changes section; no transition, no animation
-
-// decided: a commit takes only the step's files, its snapshot, and its spec when it isn't a draft, so other work stays out
-
-// decided: Claude writes the message in a one-off headless run from the step and its diff, not in the step's chat
-
-// decided: .claude/settings.local.json is your local permissions, so it's left out of Changes and the commit
-
-// decided: a ticked step, or one with a snapshot: line, that leaves its spec counts as accepted, however it was folded
-
-## Fold in VS Code
-
-// The extension folds done steps itself, with the same code as llmd snapshot, so VS Code users don't need the CLI.
-
-@src/cli.ts
-  - snapshot(spec: string) -> string[]
-    - ~fold one spec, archive its folded steps and print their titles; false when it had none
-    - fold one spec and archive its folded steps; return what to tell the user, nothing when there was nothing to fold
-    - exported, so the extension folds the same way
-  - main(args: string[])
-    - print the lines snapshot returns
-
-@.vscodeignore
-  - ship out/cli.js in the extension too, for Fold
-
-@src/extension.ts
-  - activate(context: vscode.ExtensionContext)
-    - a "Fold" code lens on each done step besides Current state
-  - foldSpec(uri: vscode.Uri)
-    - save the spec, run cli.snapshot on it and show what it says
-  ! Fold on a done step moves it into Current state and appends it to .llmd/archive/, exactly like llmd snapshot
-
-@media/run.js
-  - a step that's done but not folded gets a Fold button in its run's bar
-
-@src/e2e.ts
-  - Fold shows on done steps only, and folding leaves just Current state
-
-@docs/guide.md
-  - the Fold button under The snapshot, and that VS Code needs no CLI for it
-
-## Snapshots that keep up with the code
-
-// In a real Go project, Current state stopped matching the code after a few steps:
-// - routes() shows twice: under ": application", and again at file level, where later steps added their routes
-// - "- (app *application) getIndex()" isn't read as a method, so it can't merge, show in the outline or get drift warnings
-// - one step removed main() with ~ and listed it again with only its new lines, so Current state lost the logger and the listen
-// - a ~ only reaches its own spec, so a shared file's removed line lives on in the other spec that listed it
-
-@src/outline.ts
-  - METHOD also reads a Go receiver: "- (app *application) getIndex()" is the method getIndex
-  - parseOutline(text: string) -> OutlineNode[]
-    - a method with a receiver goes under that type when its unit declares it, else under the unit
-
-@src/snapshot.ts
-  - merge(into: Line[], from: Line[])
-    - a type, method or field matches the same name anywhere in its unit, not just at the same level, when only one has that name
-  - fold(text: string) -> { text: string; folded: string[]; warnings: string[] }
-    - warn when a step removes a method with ~ and lists it again: Current state then keeps only that step's lines for it
-  - prune(text: string, steps: string[]) -> string
-    - apply only the ~ lines of steps folded from another spec to this spec's Current state
-
-@src/cli.ts
-  - snapshot(spec: string) -> string[]
-    - prune the other specs in .llmd/ with the folded steps, since the code lost those lines whichever spec lists them
-    - pass on fold's warnings
-  ! folding a step in book.llmd with "- ~print the result" under a shared file removes that line from loan.llmd's Current state too
-
+## [x] The skill and the guide say the new way
 @skills/llmd/SKILL.md
-  - to change a method's logic, ~ the lines that changed and add the new ones; ~ the method itself only to delete it
-  - a Go method can be written with its receiver, "- (a *app) routes()", or under its type
-  - while planning, suggest turning - lines that ask for something, like "Lets improve it with a better layout", into * lines, so they're replaced by what was built
-
-@src/test.ts
-  - check a receiver method in the outline and the fold, a file-level method merging into its type, prune, and the remove-and-list-again warning
-
 @docs/guide.md
-  - Go receivers in the line types table
-  - a ~ reaches every spec, and the warning for removing a method and listing it again
-
-## The spec knows the code
-
-// Names in a spec point at the real code, through the language's own symbol provider, the one drift warnings already use.
-// Built names are colored like code, hovering shows their code, and Ctrl+click opens it. Names that aren't built yet stay plain.
-
-@src/symbols.ts
-  - indexSymbols(nodes: OutlineNode[]) -> Map<string, Declared>
-    - in a go spec, a file unit is also known by its folder, its package: internal/store/sqlite.go is "store" too, so store.GetRecords resolves
-
-@src/extension.ts
-  - symbolsOf(uri: vscode.Uri) -> Promise<Map<string, vscode.DocumentSymbol> | undefined>
-    - each name with its symbol, so the spec knows where it is and what kind it is; the first wins when names repeat
-  - codeSymbol(doc: vscode.TextDocument, pos: vscode.Position) -> Promise<{ uri: vscode.Uri; symbol: vscode.DocumentSymbol } | undefined>
-    - on a type, method or field line under an @ unit: that name in the unit's file
-    - on a Name.member call: the member in the file where the spec declares it
-  - activate(context: vscode.ExtensionContext)
-    - Ctrl+click on a type, method or field line opens its file at that symbol; Name.member still jumps to its line in the spec
-    - hovering a name the code has shows its first lines of code, colored as its language, with its path and line
-    - names the code has get a semantic token by their kind there, like class, interface, function, method or property
-    - refresh those tokens when any file is saved
-    // a name in an open step can already exist, when the step changes existing code, so this covers every step
-  ! a method under an @ unit that its file has is colored and opens the file at it; one the file lacks stays plain
-
-@src/e2e.ts
-  - in the drift fixture: the built method opens store.ts at it, its hover shows its code, and it gets a token; the planned one gets none
-
-@docs/guide.md
-  - under Editor help: built names colored like code, hover and Ctrl+click into the code, and that this needs the language's extension, like drift warnings
+@README.md
+  - the plan is intent, the code is the proof: no Current state, snapshots, fold, drafts or CLI
+  - Claude ticks a built step and leaves it; the user marks it done, which takes it out of the spec
+  - the guide's editor help covers the green "new" names, real completion, hover and Ctrl+click

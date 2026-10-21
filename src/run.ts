@@ -2,17 +2,14 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { agentArgs, Part, render, stepPrompt } from './agent';
+import { missing } from './code';
 import { openSteps, stepSection } from './outline';
 import { projectOf } from './refs';
-import { foldInto, snapshotName } from './snapshot';
 
 // A step's run. Implement or Plan turns the spec's editor into the step's own chat, in the same spot: the step stays on the
 // left, live as the agent edits it, and the conversation is on the right. Each step is one fresh claude session, run headless.
-// A new feature is a draft: one ## step in .llmd/drafts/, a folder the editor hides. Once it's built, Accept folds it into
-// the snapshot the agent picked, .llmd/snapshots/<feature>.llmd, and the draft is gone.
-
-// Feature drafts live in .llmd/drafts/, which package.json hides from the explorer and search.
-const isDraft = (uri: vscode.Uri) => /[\\/]\.llmd[\\/]drafts[\\/][^\\/]+$/.test(uri.fsPath);
+// The plan is intent and the code is the proof: once Claude ticks the step and the code has what it lists, Done takes it out
+// of the spec, and the run becomes its review.
 
 // @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 export function rootOf(uri: vscode.Uri): vscode.Uri {
@@ -47,13 +44,12 @@ export interface Run {
   step: string;
   messages: Message[];
   before?: string[]; // the step's lines when its first run started, so you see what the agent changed
-  last?: string[]; // the step's lines when it was last seen in the spec, shown once it's folded away
+  last?: string[]; // the step's lines when it was last seen in the spec, shown once it's out of it
   mode?: 'implement' | 'plan';
-  accepted?: string; // the snapshot it was folded into
+  done?: boolean; // the step is built and out of the spec: the run is its review
   base?: string; // the git tree of the working tree when the step's first run started, if it was a repository then
   repo?: { top: string; base: string }; // the repository and the tree its diffs are from, once they're read
   diffs?: Diff[];
-  finishing?: boolean; // accepted before the agent ticked it: it's finishing the step, then it folds
   drafting?: boolean; // Claude is writing the commit message
   committed?: string; // "<hash> <subject>" once the step's changes are committed
   child?: ChildProcess;
@@ -76,20 +72,32 @@ export function runOf(spec: vscode.Uri, step: string): Run {
   const key = runKey(spec, step);
   let run = runs.get(key);
   if (!run) {
-    const saved = state.get<Pick<Run, 'messages' | 'before' | 'last' | 'mode' | 'accepted' | 'base' | 'committed'>>('run ' + key);
+    const saved = state.get<Pick<Run, 'messages' | 'before' | 'last' | 'mode' | 'done' | 'base' | 'committed'>>('run ' + key);
     runs.set(key, (run = { spec, step, messages: [], ...saved }));
   }
   return run;
 }
 
-// A step with a run to go back to: one that's open, working, or has talked before.
+// A step with a run to go back to: one that's open, working, or has talked before. A done run is history, not the run of
+// a step that has its title now.
 export const hasRun = (spec: vscode.Uri, step: string) => {
   const key = runKey(spec, step);
-  return runs.has(key) || state.get('run ' + key) !== undefined;
+  const run = runs.get(key) ?? state.get<Pick<Run, 'done'>>('run ' + key);
+  return !!run && !run.done;
 };
 
+// A new step with a done step's title, like another "Test", starts its own run: a fresh chat and session.
+function restart(run: Run) {
+  if (!run.done) return;
+  Object.assign(run, { messages: [], before: undefined, last: undefined, mode: undefined, done: undefined, base: undefined, repo: undefined,
+    diffs: undefined, committed: undefined });
+  state.update('session ' + runKey(run.spec, run.step), undefined);
+  save(run);
+  post(run);
+}
+
 const save = (run: Run) =>
-  state.update('run ' + runKey(run.spec, run.step), { messages: run.messages, before: run.before, last: run.last, mode: run.mode, accepted: run.accepted, base: run.base,
+  state.update('run ' + runKey(run.spec, run.step), { messages: run.messages, before: run.before, last: run.last, mode: run.mode, done: run.done, base: run.base,
     committed: run.committed });
 
 // Markdown through VS Code's own renderer, the one the markdown preview uses; plain text if it isn't there.
@@ -104,7 +112,7 @@ async function toHtml(part: Part) {
 }
 
 // The spec as you see it: the editor's text while it has unsaved edits, else the file, which the agent edits. Not the
-// editor's otherwise: an editor keeps a deleted draft's text, and the step would look like it's still there.
+// editor's otherwise: an editor keeps a deleted spec's text, and the step would look like it's still there.
 async function specText(uri: vscode.Uri): Promise<string | undefined> {
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
   return open?.isDirty ? open.getText() : readFile(uri);
@@ -112,34 +120,32 @@ async function specText(uri: vscode.Uri): Promise<string | undefined> {
 
 async function post(run: Run) {
   const text = await specText(run.spec);
-  const section = text === undefined ? undefined : stepSection(text, run.step);
+  // A done run shows the step as it was, whatever has its title in the spec now.
+  const section = text === undefined || run.done ? undefined : stepSection(text, run.step);
   if (section) run.last = section.lines;
-  // A ticked step that left its spec was folded, by Claude or by llmd snapshot: that accepts it, into the snapshot it named.
-  if (!section && !run.accepted && run.last && (/^##\s+\[[xX]\]/.test(run.last[0]) || snapshotName(run.last))) {
-    const name = snapshotName(run.last);
-    run.accepted = name ? `.llmd/snapshots/${name}.llmd` : specPath(run.spec);
-    run.finishing = false;
+  // A ticked step that left its spec, taken out by hand, is done too.
+  if (!section && !run.done && run.last && /^##\s+\[[xX]\]/.test(run.last[0])) {
+    run.done = true;
     save(run);
     changes.fire();
   }
   if (!run.panel) return;
   const root = rootOf(run.spec).fsPath;
+  const ticked = !!section?.done;
   run.panel.webview.postMessage({
     key: runKey(run.spec, run.step),
     step: run.step,
-    file: isDraft(run.spec) ? 'new feature' : specPath(run.spec),
+    file: specPath(run.spec),
     lines: section?.lines ?? run.last ?? [],
     before: run.before,
-    done: !!section?.done,
-    folded: !section && !!run.last,
-    snapshot: section && snapshotName(section.lines),
-    accepted: run.accepted,
+    ticked,
+    missing: ticked && !run.child ? await missing(rootOf(run.spec), section!.lines) : [], // what the code doesn't back yet
+    done: !!run.done,
     mode: run.mode,
     working: !!run.child,
-    finishing: !!run.finishing,
     drafting: !!run.drafting,
     committed: run.committed,
-    next: run.accepted || run.finishing ? await nextSteps(rootOf(run.spec)) : [],
+    next: run.done ? await nextSteps(rootOf(run.spec)) : [],
     messages: run.messages,
     git: !!run.repo,
     diffs: run.diffs ?? [],
@@ -295,12 +301,12 @@ function show(run: Run, panel: vscode.WebviewPanel) {
     if (m.type === 'run') return runStep(m.mode, run.spec, run.step);
     if (m.type === 'stop') return stop(run);
     if (m.type === 'edit') return editSpec(run);
-    if (m.type === 'accept') return accept(run);
+    if (m.type === 'done') return done(run);
     if (m.type === 'file') return openChanges(run, m.path);
     if (m.type === 'changes') return openChanges(run);
     if (m.type === 'write') return writeMessage(run);
     if (m.type === 'commit') return commit(run, m.text);
-    if (m.type === 'next') return openRun(vscode.Uri.parse(m.spec), m.step);
+    if (m.type === 'next') return restart(openRun(vscode.Uri.parse(m.spec), m.step));
     if (m.type === 'newFeature') return newFeature();
   });
   panel.onDidDispose(() => {
@@ -325,13 +331,13 @@ export async function openChanges(run: Run, file?: string) {
     : vscode.window.showTextDocument(old ?? uri);
 }
 
-// Claude writes the commit message for an accepted step, from the step and its diff, in a one-off headless run.
+// Claude writes the commit message for a done step, from the step and its diff, in a one-off headless run.
 export async function writeMessage(run: Run) {
   if (run.drafting) return;
   const root = rootOf(run.spec).fsPath;
   const recent = (await git(root, ['log', '--format=%s', '-10'])) ?? '';
   const diff = (run.diffs ?? []).map((d) => d.diff).join('\n').slice(0, 20000); // ponytail: a huge diff is cut
-  const prompt = `Write the git commit message for this step, which is built and accepted:\n\n${(run.last ?? []).join('\n')}\n\n` +
+  const prompt = `Write the git commit message for this step, which is built and done:\n\n${(run.last ?? []).join('\n')}\n\n` +
     `Its changes:\n${diff}\n\n` + (recent.trim() ? `Match the style of the repository's recent commits:\n${recent}\n` : '') +
     'Reply with only the message: a subject line, then a blank line and a short body only if it helps. No code fences, and no tools.';
   run.drafting = true;
@@ -357,17 +363,18 @@ export async function writeMessage(run: Run) {
   return text;
 }
 
-// Commits what the accepted step changed: the files in Changes, the snapshot it went into, and its spec unless it's a draft.
-// Only those paths, so whatever else you have staged stays staged and out of the commit.
+// Commits what the done step changed: the files in Changes, and its spec, which the step left, or which went with it. Only
+// those paths, so whatever else you have staged stays staged and out of the commit.
 export async function commit(run: Run, message: string) {
-  if (!message.trim() || !run.accepted || run.committed) return;
+  if (!message.trim() || !run.done || run.committed) return;
   const root = rootOf(run.spec).fsPath;
   const diffs = run.diffs ?? [];
+  const spec = (await readFile(run.spec)) !== undefined ? [specPath(run.spec)] : [];
   // A deleted file git never tracked has nothing to commit, and naming it would fail the whole commit.
-  const deleted = diffs.filter((d) => d.status === 'D').map((d) => d.name);
+  const deleted = [...diffs.filter((d) => d.status === 'D').map((d) => d.name), ...(spec.length ? [] : [specPath(run.spec)])];
   const tracked = deleted.length ? ((await git(root, ['--literal-pathspecs', 'ls-files', '-z', '--', ...deleted])) ?? '').split('\0') : [];
-  const paths = [...diffs.filter((d) => d.status !== 'D').map((d) => d.name), ...tracked.filter(Boolean), run.accepted,
-    ...(isDraft(run.spec) ? [] : [specPath(run.spec)])];
+  const paths = [...diffs.filter((d) => d.status !== 'D').map((d) => d.name), ...tracked.filter(Boolean), ...spec];
+  if (!paths.length) return; // "git commit --" with no paths would take everything you have staged
   const failed = (args: string[]) => new Promise<string | undefined>((resolve) => execFile('git', ['--literal-pathspecs', ...args], { cwd: root },
     (err, _out, stderr) => resolve(err ? stderr.trim() || err.message : undefined)));
   const problem = (await failed(['add', '-A', '--', ...paths])) ?? (await failed(['commit', '-q', '-m', message.trim(), '--', ...paths]));
@@ -377,15 +384,13 @@ export async function commit(run: Run, message: string) {
   await post(run);
 }
 
-// The open steps to build next: features in progress first, then the steps in the project's specs.
+// The open steps to build next, from the project's plans.
 export async function nextSteps(root: vscode.Uri) {
   const next: { spec: string; step: string; where: string }[] = [];
-  for (const dir of ['drafts', '']) {
-    const folder = vscode.Uri.joinPath(root, '.llmd', dir);
-    for (const f of (await readDirectory(folder)).filter((f) => f.endsWith('.llmd'))) {
-      const uri = vscode.Uri.joinPath(folder, f);
-      for (const s of openSteps((await readFile(uri)) ?? '')) next.push({ spec: uri.toString(), step: s.title, where: dir ? 'new feature' : f });
-    }
+  const folder = vscode.Uri.joinPath(root, '.llmd');
+  for (const f of (await readDirectory(folder)).filter((f) => f.endsWith('.llmd'))) {
+    const uri = vscode.Uri.joinPath(folder, f);
+    for (const s of openSteps((await readFile(uri)) ?? '')) next.push({ spec: uri.toString(), step: s.title, where: f });
   }
   return next.slice(0, 8);
 }
@@ -403,15 +408,16 @@ export function send(run: Run, text: string) {
   const sel = editor?.selection;
   const selected = sel ? `\nSelected in the spec, lines ${sel.start.line + 1}-${sel.end.line + 1}:\n${editor!.document.getText(sel)}` : '';
   return ask(run, text, `${text}\n\n(This is about the step "${run.step}" in ${specPath(run.spec)}. ` +
-    `Don't fold it or run llmd snapshot: I accept it here.${selected})`);
+    `Once it's built, tick it but leave it in the spec: I mark it done here.${selected})`);
 }
 
 export function runStep(mode: 'implement' | 'plan', spec: vscode.Uri, step: string) {
   const run = openRun(spec, step);
+  restart(run);
   run.mode = mode;
-  // You accept the step yourself, in the run, so the agent stops at the tick.
-  const accepting = mode === 'implement' ? ". When it's built and ticked, don't fold it: I review it and accept it." : '';
-  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, stepPrompt(mode, step, specPath(spec)) + accepting);
+  // You mark the step done yourself, in the run, so the agent stops at the tick.
+  const leave = mode === 'implement' ? ". When it's built, tick it but leave it in the spec: I review it and mark it done." : '';
+  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, stepPrompt(mode, step, specPath(spec)) + leave);
 }
 
 function stop(run: Run) {
@@ -488,8 +494,6 @@ async function ask(run: Run, text: string, prompt: string) {
       await post(run);
       save(run); // ponytail: each step's whole run in workspace state; trim it if runs get huge
       changes.fire();
-      if (run.finishing && !run.stopped) await accept(run);
-      else run.finishing = false;
     });
   };
   child.on('error', (e) => end(`Couldn't start ${program}: ${e.message}. Install Claude Code, or change LLMD: Agent Command in the settings.`));
@@ -504,13 +508,7 @@ async function readFile(uri: vscode.Uri): Promise<string | undefined> {
   }
 }
 
-// The project's snapshots, by feature name.
-async function snapshots(root: vscode.Uri): Promise<string[]> {
-  const found = await vscode.workspace.findFiles(new vscode.RelativePattern(root, '.llmd/snapshots/*.llmd'));
-  return found.map((f) => path.basename(f.fsPath, '.llmd')).sort();
-}
-
-// The lang: line the project's specs use, for a new draft or a new snapshot.
+// The lang: line the project's specs use, for a new feature.
 async function langOf(root: vscode.Uri): Promise<string | undefined> {
   for (const f of await vscode.workspace.findFiles(new vscode.RelativePattern(root, '.llmd/**/*.llmd'), undefined, 20)) {
     const lang = (await readFile(f))?.match(/^lang:.*$/m)?.[0];
@@ -524,53 +522,22 @@ function project(): vscode.Uri | undefined {
   return active?.scheme === 'file' && vscode.workspace.getWorkspaceFolder(active) ? rootOf(active) : vscode.workspace.workspaceFolders?.[0]?.uri;
 }
 
-// A new feature is one ## step in a hidden draft, .llmd/drafts/<name>.llmd. It opens on the line under the step, ready to write.
+// A new feature is a plan, .llmd/<name>.llmd, with its first ## step. It opens on the line under the step, ready to write.
 async function newFeature() {
   const root = project();
   if (!root) return vscode.window.showWarningMessage('Open a project folder first, so the feature has a project to go into.');
-  const drafts = vscode.Uri.joinPath(root, '.llmd', 'drafts');
+  const plans = vscode.Uri.joinPath(root, '.llmd');
   const name = (await vscode.window.showInputBox({ prompt: 'Name of the feature, the title of its step', placeHolder: 'Export readings as CSV' }))?.trim();
   const slug = name?.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '');
   if (!name || !slug) return;
-  await vscode.workspace.fs.createDirectory(drafts);
-  let uri = vscode.Uri.joinPath(drafts, slug + '.llmd');
-  for (let i = 2; (await readFile(uri)) !== undefined; i++) uri = vscode.Uri.joinPath(drafts, `${slug}-${i}.llmd`);
+  await vscode.workspace.fs.createDirectory(plans);
+  let uri = vscode.Uri.joinPath(plans, slug + '.llmd');
+  for (let i = 2; (await readFile(uri)) !== undefined; i++) uri = vscode.Uri.joinPath(plans, `${slug}-${i}.llmd`);
   const lang = await langOf(root);
   await vscode.workspace.fs.writeFile(uri, Buffer.from(`${lang ? lang + '\n\n' : ''}## ${name}\n\n`));
   const doc = await vscode.workspace.openTextDocument(uri);
   const at = new vscode.Position(doc.lineCount - 1, 0);
   return vscode.window.showTextDocument(doc, { selection: new vscode.Range(at, at) });
-}
-
-// The drafts you're working on, to open one again, or to throw one away.
-async function openFeature() {
-  const root = project();
-  if (!root) return newFeature();
-  const drafts = vscode.Uri.joinPath(root, '.llmd', 'drafts');
-  const files = (await readDirectory(drafts)).filter((f) => f.endsWith('.llmd'));
-  const items = await Promise.all(files.map(async (f) => {
-    const uri = vscode.Uri.joinPath(drafts, f);
-    const text = (await readFile(uri)) ?? '';
-    const title = text.match(/^##\s+(?:\[[ xX]\]\s*)?(.*?)\s*$/m)?.[1] || f;
-    return { label: title, description: /^##\s+\[[xX]\]/m.test(text) ? 'done, ready to accept' : '', uri,
-      buttons: [{ iconPath: new vscode.ThemeIcon('trash'), tooltip: 'Discard this feature' }] };
-  }));
-  const pick = vscode.window.createQuickPick<vscode.QuickPickItem & { uri?: vscode.Uri }>();
-  pick.placeholder = items.length ? 'Open a feature you are working on' : 'No features in progress';
-  pick.items = [{ label: '$(add) New feature' }, ...items];
-  pick.onDidTriggerItemButton(async (e) => {
-    const sure = await vscode.window.showWarningMessage(`Discard "${e.item.label}"?`, { modal: true }, 'Discard');
-    if (sure !== 'Discard' || !e.item.uri) return;
-    await vscode.workspace.fs.delete(e.item.uri);
-    pick.items = pick.items.filter((i) => i !== e.item);
-  });
-  pick.onDidAccept(() => {
-    const item = pick.selectedItems[0];
-    pick.hide();
-    if (item?.uri) vscode.window.showTextDocument(item.uri);
-    else if (item) newFeature();
-  });
-  pick.show();
 }
 
 async function readDirectory(uri: vscode.Uri): Promise<string[]> {
@@ -581,9 +548,9 @@ async function readDirectory(uri: vscode.Uri): Promise<string[]> {
   }
 }
 
-// Folds the done step into the snapshot it names, .llmd/snapshots/<feature>.llmd, and takes it out of where it was written:
-// a draft goes away with its last step. Without a snapshot: line, you pick one.
-export async function accept(run: Run) {
+// Takes the built step out of its spec, once Claude ticked it and the code has everything it lists, and the spec with its
+// last step. Its run is the review.
+export async function done(run: Run) {
   if (run.child) return;
   // The file is the truth: the agent edits it on disk, and the editor may not have caught up. Only your unsaved edits go first.
   const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === run.spec.toString());
@@ -591,53 +558,29 @@ export async function accept(run: Run) {
   const text = (await readFile(run.spec)) ?? '';
   const section = stepSection(text, run.step);
   if (!section) {
-    await post(run); // a ticked step that's gone was folded already, which post takes as accepted
-    if (!run.accepted) vscode.window.showWarningMessage(`"${run.step}" isn't in ${specPath(run.spec)} anymore, so there's nothing to accept.`);
+    await post(run); // a ticked step that's gone was taken out already, which post takes as done
+    if (!run.done) vscode.window.showWarningMessage(`"${run.step}" isn't in ${specPath(run.spec)} anymore, so there's nothing to finish.`);
     return;
   }
-  // Accepted before the agent ticked it: it makes the step say what it built first, then this runs again and folds it.
-  if (!section.done) {
-    if (run.finishing) {
-      run.finishing = false;
-      return vscode.window.showWarningMessage(`Claude didn't tick "${run.step}", so it isn't folded. Its last reply in the run says why.`);
-    }
-    run.finishing = true;
-    return ask(run, 'Accept', `I accept the step "${run.step}" in ${specPath(run.spec)} as you built it. Make the step describe what you built: ` +
-      `replace its * lines, turn + into @ for the files that exist now, add ~ lines for what changed, add its snapshot: line, and tick it. ` +
-      `Don't change any code and don't fold it.`);
-  }
-  run.finishing = false;
-  const root = rootOf(run.spec);
-  const name = snapshotName(section.lines) ?? (await pickSnapshot(root));
-  if (!name) return;
-  const target = vscode.Uri.joinPath(root, '.llmd', 'snapshots', name + '.llmd');
-  await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, '..'));
-  const lang = text.match(/^lang:.*$/m)?.[0] ?? (await langOf(root));
-  await vscode.workspace.fs.writeFile(target, Buffer.from(foldInto(await readFile(target), section.lines, name, lang)));
-
+  // Not awaited: the message's promise only settles once you close it.
+  if (!section.done) return void vscode.window.showWarningMessage(`"${run.step}" isn't ticked yet. Claude ticks it once it's built.`);
+  const gaps = await missing(rootOf(run.spec), section.lines);
+  if (gaps.length) return void vscode.window.showWarningMessage(`"${run.step}" isn't in the code yet: ${gaps.join(', ')}.`);
   const lines = text.split(/\r?\n/);
   lines.splice(section.line, section.lines.length);
   const rest = lines.join('\n').replace(/\n{3,}/g, '\n\n');
-  if (isDraft(run.spec) && !/^##\s/m.test(rest)) {
+  if (/^##\s/m.test(rest)) await vscode.workspace.fs.writeFile(run.spec, Buffer.from(rest));
+  else {
     const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs)
       .filter((t) => t.input instanceof vscode.TabInputText && t.input.uri.toString() === run.spec.toString());
     await vscode.window.tabGroups.close(tabs);
     await vscode.workspace.fs.delete(run.spec);
-  } else {
-    await vscode.workspace.fs.writeFile(run.spec, Buffer.from(rest));
   }
-  run.accepted = `.llmd/snapshots/${name}.llmd`;
+  run.done = true;
   run.last = section.lines;
   save(run);
   await post(run);
   changes.fire();
-}
-
-async function pickSnapshot(root: vscode.Uri): Promise<string | undefined> {
-  const NEW = '$(add) New snapshot…';
-  const pick = await vscode.window.showQuickPick([...(await snapshots(root)), NEW], { placeHolder: 'Which feature does this step belong to?' });
-  if (pick !== NEW) return pick;
-  return (await vscode.window.showInputBox({ prompt: 'Name of the new snapshot', placeHolder: 'handler' }))?.trim().toLowerCase().replace(/[^\w.-]+/g, '-');
 }
 
 export function initRuns(context: vscode.ExtensionContext) {
@@ -652,7 +595,7 @@ export function initRuns(context: vscode.ExtensionContext) {
     changes,
     specs,
     specs.onDidChange(refresh),
-    specs.onDidDelete(refresh), // a draft goes away when its last step is folded
+    specs.onDidDelete(refresh),
     specs.onDidCreate(refresh),
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'llmd' && refresh(e.document.uri)),
     vscode.workspace.registerTextDocumentContentProvider('llmd-base', {
@@ -662,8 +605,6 @@ export function initRuns(context: vscode.ExtensionContext) {
       },
     }),
     vscode.commands.registerCommand('llmd.newFeature', newFeature),
-    vscode.commands.registerCommand('llmd.openFeature', openFeature),
-    vscode.commands.registerCommand('llmd.accept', (spec: vscode.Uri, step: string) => accept(runOf(spec, step))),
     vscode.commands.registerCommand('llmd.run', (spec: vscode.Uri, step: string) => openRun(spec, step)),
     // After a reload, a run's tab comes back on its step.
     vscode.window.registerWebviewPanelSerializer('llmd.run', {

@@ -11,21 +11,21 @@ let moving = false; // the Accept transition is playing
 
 window.addEventListener('message', (e) => {
   if (e.data.type === 'commitMessage') return void ($('message').value = e.data.text);
-  const accepting = state && !reviewing(state) && reviewing(e.data);
+  const finishing = state && !reviewing(state) && reviewing(e.data);
   state = e.data;
   vscode.setState({ key: state.key }); // so the tab comes back on this step after a reload
-  // Accept: the changes move over to where the conversation was and become the main view, animated by the browser. Updates
+  // Done: the changes move over to where the conversation was and become the main view, animated by the browser. Updates
   // that come in while it plays wait for it: redrawing replaces the elements it is moving, which cuts it off.
   if (moving) return;
-  if (accepting && !document.startViewTransition) log('accept: no view transitions here, so no animation');
-  if (accepting && document.startViewTransition) {
+  if (finishing && !document.startViewTransition) log('done: no view transitions here, so no animation');
+  if (finishing && document.startViewTransition) {
     moving = true;
-    log(`accept: transition starts${document.hidden ? ', but the tab is hidden' : ''}`);
+    log(`done: transition starts${document.hidden ? ', but the tab is hidden' : ''}`);
     const move = document.startViewTransition(draw);
-    move.ready.then(() => log('accept: transition playing'), (e) => log(`accept: transition skipped: ${e}`));
+    move.ready.then(() => log('done: transition playing'), (e) => log(`done: transition skipped: ${e}`));
     move.finished.finally(() => {
       moving = false;
-      log('accept: transition done');
+      log('done: transition done');
       draw(); // the latest state, held back while it moved
     });
   } else draw();
@@ -37,8 +37,8 @@ window.addEventListener('message', (e) => {
 const log = (text) => vscode.postMessage({ type: 'log', text });
 window.addEventListener('error', (e) => log(`error: ${e.message}`));
 
-// From the moment you accept, also while Claude finishes the step first, the run is the review of what it changed.
-const reviewing = (s) => !!(s.accepted || s.finishing);
+// Once the step is done, the run is the review of what it changed.
+const reviewing = (s) => !!s.done;
 
 function draw() {
   drawBar();
@@ -53,25 +53,24 @@ function draw() {
 }
 
 function status() {
-  if (state.working) return ['busy', state.finishing ? 'Finishing the step' : state.mode === 'plan' ? 'Planning' : 'Implementing'];
-  if (state.accepted) return ['done', `Accepted into ${state.accepted.replace(/^.*\//, '')}`];
-  if (state.folded) return ['done', 'Folded into Current state'];
-  if (state.done) return ['wait', 'Built, review and accept'];
+  if (state.working) return ['busy', state.mode === 'plan' ? 'Planning' : 'Implementing'];
+  if (state.done) return ['done', 'Done'];
+  if (state.ticked) return ['wait', state.missing.length ? 'Ticked, not in the code yet' : 'Built, review and mark done'];
   if (state.messages.length) return ['wait', state.mode === 'plan' ? 'Plan ready, your turn' : 'Waiting for you'];
   return ['idle', 'Not started'];
 }
 
 function drawBar() {
   const [kind, text] = status();
-  const open = !state.working && !state.done && !state.folded && !state.accepted;
-  // Accept is there once the agent has had a turn: a step it didn't tick, it finishes first.
-  const acceptable = !state.working && !state.accepted && !state.folded && (state.done || state.messages.length > 0);
+  const open = !state.working && !state.ticked && !state.done;
+  // Done is there once Claude ticked the step and the code has everything it lists.
+  const finish = !state.working && state.ticked && !state.missing.length && !state.done;
   $('bar').innerHTML = `<span class="crumb">${esc(state.file)}</span><span class="sep">›</span><h1>${esc(state.step)}</h1>
     <span class="status ${kind}"><span class="pip"></span>${esc(text)}</span><span class="grow"></span>
     ${open ? '<button class="primary" data-act="implement">▶ Implement</button><button data-act="plan">Plan</button>' : ''}
-    ${acceptable ? `<button class="primary" data-act="accept" title="${state.done ? 'Fold this step into its snapshot' : 'Claude makes the step describe what it built, ticks it, and then it folds into its snapshot'}">✓ Accept${state.snapshot ? ` into ${esc(state.snapshot)}` : ''}</button>` : ''}
+    ${finish ? '<button class="primary" data-act="done" title="Take the step out of the spec: the code has it now">✓ Done</button>' : ''}
     ${state.working ? '<button data-act="stop">■ Stop</button>' : ''}
-    ${state.accepted ? '' : '<button data-act="edit" title="Back to the spec, at this step">Edit spec</button>'}`;
+    ${state.done ? '' : '<button data-act="edit" title="Back to the spec, at this step">Edit spec</button>'}`;
 }
 
 // The step as it is in the spec now, with what changed since its run started: added lines green, removed ones struck.
@@ -83,25 +82,25 @@ function drawStep() {
   const changes = state.git ? diffs() : state.files.length
     ? `<div class="changes"><h2>Changed files</h2><p class="hint">Not a git repository, so only the names. Run <code>git init</code> and commit, and the next step shows its changes here.</p>${state.files.map((f) => `<button class="file" data-act="file" data-path="${esc(f.path)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
-  // Once it's accepted, what the step changed is the main view, with the commit and what to build next.
+  // Once it's done, what the step changed is the main view, with the commit and what to build next.
   const review = reviewing(state);
   if (review && !document.body.classList.contains('reviewing')) state.diffs.forEach((d) => openDiffs.add(d.path));
   document.body.classList.toggle('reviewing', review);
   if (review) drawReview(state.git ? diffs() : changes);
-  const gone = state.accepted
-    ? `<p class="note">Accepted into ${esc(state.accepted)}. The lines above are how the step looked.</p>`
-    : state.folded ? '<p class="note">This step is built and folded into Current state. The lines above are how it looked last.</p>' : '';
-  $('step').innerHTML = `${review ? next() : ''}<div class="code${state.folded || state.accepted ? ' folded' : ''}">${lines}</div>${gone}${review ? '' : changes}`;
+  // A tick the code doesn't back says what's missing, under the step.
+  const note = state.done ? '<p class="note">Done, and out of the spec: the code has it now. The lines above are how the step looked.</p>'
+    : state.missing.length ? `<p class="note missing">Ticked, but not in the code yet:</p><ul class="missing">${state.missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : '';
+  $('step').innerHTML = `${review ? next() : ''}<div class="code${state.done ? ' folded' : ''}">${lines}</div>${note}${review ? '' : changes}`;
 }
 
 function drawReview(changes) {
   $('commit').hidden = !state.git || !state.diffs.length || !!state.committed;
   const write = $('commit').querySelector('[data-act="write"]');
-  write.disabled = state.drafting || !state.accepted; // the commit waits for the step to be folded
-  $('commitButton').disabled = !state.accepted;
+  write.disabled = state.drafting || !state.done; // the commit waits for the step to be done
+  $('commitButton').disabled = !state.done;
   write.textContent = state.drafting ? 'Claude is writing…' : '✨ Write with Claude';
   $('committed').innerHTML = state.committed ? `<span class="tick">✓</span> Committed <code>${esc(state.committed)}</code>` : '';
-  $('landed').innerHTML = changes;
+  $('landed').innerHTML = changes || `<p class="hint">${state.git ? 'No files changed since the step\'s run started, so there\'s nothing to commit.' : 'Not a git repository, so there are no changes to show or commit.'}</p>`;
 }
 
 // What to build next, above the step you just finished: the open steps, then a new feature.
@@ -219,7 +218,7 @@ document.addEventListener('click', (e) => {
   }
   if (act === 'stop') vscode.postMessage({ type: 'stop' });
   if (act === 'edit') vscode.postMessage({ type: 'edit' });
-  if (act === 'accept') vscode.postMessage({ type: 'accept' });
+  if (act === 'done') vscode.postMessage({ type: 'done' });
   if (act === 'refresh') vscode.postMessage({ type: 'refresh' });
   if (act === 'changes') vscode.postMessage({ type: 'changes' });
   if (act === 'write') vscode.postMessage({ type: 'write' });

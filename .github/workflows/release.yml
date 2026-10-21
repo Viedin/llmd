@@ -18,9 +18,8 @@ jobs:
       - name: Check the tag matches package.json
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: npm ci
-      # Fixed asset names, so the README's releases/latest/download/ links never change.
-      - run: mv "$(npm pack | tail -1)" llmd.tgz
+      # A fixed asset name, so the README's releases/latest/download/ link never changes.
       - run: npx @vscode/vsce package --out llmd.vsix
-      - run: gh release create "$GITHUB_REF_NAME" llmd.tgz llmd.vsix --title "$GITHUB_REF_NAME" --generate-notes
+      - run: gh release create "$GITHUB_REF_NAME" llmd.vsix --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

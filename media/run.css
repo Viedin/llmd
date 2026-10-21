@@ -50,6 +50,8 @@ h1 { margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow
 .l { min-height: 1.6em; padding-right: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .folded { opacity: 0.6; }
 .note { margin: 12px 14px 0 4.6em; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.note.missing { color: var(--vscode-editorWarning-foreground); }
+ul.missing { margin: 4px 14px 0 4.6em; padding-left: 16px; font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--vscode-descriptionForeground); }
 .l.k-unit, .ref { color: var(--vscode-textLink-foreground); }
 .l.k-type { color: var(--vscode-symbolIcon-classForeground); }
 .method { color: var(--vscode-symbolIcon-methodForeground); }
@@ -148,13 +150,13 @@ details.diff .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ell
 #send:hover { background: var(--vscode-button-hoverBackground); }
 #send.stop { font-size: 10px; }
 
-/* An accepted step: its changes take the conversation's place, with the commit and what's next */
+/* A done step: its changes take the conversation's place, with the commit and what's next */
 #review { display: none; overflow: auto; padding: 16px 22px 24px; }
 body.reviewing { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); transition: none; }
 body.reviewing #chat { display: none; }
 body.reviewing #review { display: block; }
 #review .changes { margin: 0; }
-/* Accept, choreographed: the conversation slides away, the changes lift out of the step's column and open up as the main
+/* Done, choreographed: the conversation slides away, the changes lift out of the step's column and open up as the main
    view, then the commit box and Next rise in. The browser's view transitions do the moving. */
 .changes { view-transition-name: changes; }
 #step .code { view-transition-name: step; }
