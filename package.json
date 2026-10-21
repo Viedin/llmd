@@ -2,7 +2,7 @@
   "name": "llmd",
   "displayName": "LLMD",
   "description": "Markdown flow specs with @file references, for planning work with an LLM",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "publisher": "viedin",
   "icon": "images/icon.png",
   "license": "MIT",

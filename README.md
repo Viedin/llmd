@@ -84,7 +84,7 @@ The skill comes straight from the repo, so there's nothing to build. New session
 - [Claude Code](https://code.claude.com/docs), the `claude` command. It's the default.
 - [Codex](https://learn.chatgpt.com/docs/codex/cli), the `codex` command. To use it, run **LLMD: Settings** from the Command Palette and set **Agent** to Codex.
 
-LLMD: Settings also holds the command each agent starts, for your own flags, like a model. The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md#the-agent) says what each runs with and what it may do.
+LLMD: Settings also holds the command each agent starts, for your own flags, like a model. Set **Run In** to **Terminal** to talk to the agent in its own CLI instead, in a terminal next to the step. The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md#the-agent) says what each runs with and what it may do.
 
 ## Quick start
 
