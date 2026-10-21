@@ -2,7 +2,7 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { agentArgs, Part, render, stepPrompt } from './agent';
-import { missing } from './code';
+import { missing, whereNames } from './code';
 import { openSteps, stepSection } from './outline';
 import { projectOf } from './refs';
 
@@ -145,7 +145,7 @@ async function post(run: Run) {
     working: !!run.child,
     drafting: !!run.drafting,
     committed: run.committed,
-    next: run.done ? await nextSteps(rootOf(run.spec)) : [],
+    next: run.done ? (await nextSteps(rootOf(run.spec))).slice(0, 8) : [],
     messages: run.messages,
     git: !!run.repo,
     diffs: run.diffs ?? [],
@@ -392,7 +392,7 @@ export async function nextSteps(root: vscode.Uri) {
     const uri = vscode.Uri.joinPath(folder, f);
     for (const s of openSteps((await readFile(uri)) ?? '')) next.push({ spec: uri.toString(), step: s.title, where: f });
   }
-  return next.slice(0, 8);
+  return next;
 }
 
 // Back to writing: the spec's editor, in the run's column, at the step.
@@ -411,13 +411,17 @@ export function send(run: Run, text: string) {
     `Once it's built, tick it but leave it in the spec: I mark it done here.${selected})`);
 }
 
-export function runStep(mode: 'implement' | 'plan', spec: vscode.Uri, step: string) {
+export async function runStep(mode: 'implement' | 'plan', spec: vscode.Uri, step: string) {
+  // Where the step's names are in the code goes along, so the agent doesn't search for them. A slow language server
+  // doesn't hold the run up.
+  const lines = stepSection((await specText(spec)) ?? '', step)?.lines ?? [];
+  const where = await Promise.race([whereNames(rootOf(spec), lines), new Promise<string>((r) => setTimeout(() => r(''), 3000))]);
   const run = openRun(spec, step);
   restart(run);
   run.mode = mode;
   // You mark the step done yourself, in the run, so the agent stops at the tick.
   const leave = mode === 'implement' ? ". When it's built, tick it but leave it in the spec: I review it and mark it done." : '';
-  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, stepPrompt(mode, step, specPath(spec)) + leave);
+  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, stepPrompt(mode, step, specPath(spec)) + leave + (where && '\n\n' + where));
 }
 
 function stop(run: Run) {

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { missing } from './code';
+import { missing, whereNames } from './code';
 import { doneLines, newRanges } from './extension';
 import { allow, commit, hasRun, nextSteps, openChanges, runKey, runs, send, writeMessage } from './run';
 import { execFileSync } from 'child_process';
@@ -268,6 +268,87 @@ async function checkCode() {
     title = await lens();
   }
   assert.strictEqual(title, '$(check) Done', 'the code backs the tick now');
+
+  // Types: the file's types after ":", a type's own members under it, and the code's types in signatures, also from a file
+  // the spec doesn't list.
+  const item = vscode.Uri.file(path.join(dir, 'item.ts'));
+  fs.writeFileSync(item.fsPath, 'export interface Item {\n  id: number;\n}\n');
+  await vscode.workspace.openTextDocument(item);
+  for (let i = 0; i < 60; i++) {
+    const found = await vscode.commands.executeCommand<vscode.SymbolInformation[]>('vscode.executeWorkspaceSymbolProvider', 'Item');
+    if (found?.some((s) => s.name === 'Item')) break;
+    await sleep(250);
+  }
+  const typesFile = path.join(dir, 'types.llmd');
+  fs.writeFileSync(typesFile, [
+    '## Types', //                           0
+    '@store.ts', //                          1
+    '  : ', //                               2
+    '  : Store', //                          3
+    '    - ', //                             4
+    '  - keep(item: Item) -> Store', //      5
+    '    - extend the : It', //              6
+    '    - stores an Item', //               7
+    '    - keeps :Item', //                  8
+  ].join('\n'));
+  const types = await vscode.workspace.openTextDocument(typesFile);
+  await vscode.window.showTextDocument(types);
+  const complete = async (line: number, col: number) =>
+    (await vscode.commands.executeCommand<vscode.CompletionList>('vscode.executeCompletionItemProvider', types.uri, new vscode.Position(line, col))).items;
+  const typeItems = await complete(2, 4);
+  assert.deepStrictEqual(typeItems.map((i) => [label(i), i.insertText]), [['Store', 'Store']], 'after ":" the file\'s types');
+  const projectItem = (await complete(6, 21)).find((i) => label(i) === 'Item');
+  assert.strictEqual(projectItem?.detail, 'item.ts', 'after ":" in a line, the project\'s types too');
+  const memberItems = (await complete(4, 6)).map(label);
+  assert.ok(memberItems.includes('save') && !memberItems.includes('load'), `under Store, its members: ${memberItems.join(', ')}`);
+  const line5 = types.lineAt(5).text;
+  const typeHover = (await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', types.uri, new vscode.Position(5, line5.lastIndexOf('Store') + 1)))
+    .flatMap((h) => h.contents).map((c) => (typeof c === 'string' ? c : c.value)).join('\n');
+  assert.ok(typeHover.includes('class Store'), `a type in a signature has its real hover: ${typeHover}`);
+  const toItem = (await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>('vscode.executeDefinitionProvider', types.uri, new vscode.Position(5, line5.indexOf('Item') + 1)))[0];
+  assert.deepStrictEqual('targetUri' in toItem ? [toItem.targetUri.fsPath, toItem.targetRange.start.line] : [toItem.uri.fsPath, toItem.range.start.line], [item.fsPath, 0],
+    "Ctrl+click on a type from a file the spec doesn't list");
+  const line7 = types.lineAt(7).text;
+  const logicHover = (await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', types.uri, new vscode.Position(7, line7.indexOf('Item') + 1)))
+    .flatMap((h) => h.contents).map((c) => (typeof c === 'string' ? c : c.value)).join('\n');
+  assert.ok(logicHover.includes('interface Item'), `a type in a logic line has its real hover: ${logicHover}`);
+  const fromLogic = (await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>('vscode.executeDefinitionProvider', types.uri, new vscode.Position(7, line7.indexOf('Item') + 1)))[0];
+  assert.strictEqual('targetUri' in fromLogic ? fromLogic.targetUri.fsPath : fromLogic.uri.fsPath, item.fsPath, 'and Ctrl+click');
+  const colored = await vscode.commands.executeCommand<vscode.SemanticTokens>('vscode.provideDocumentSemanticTokens', types.uri);
+  const spans: [number, number][] = [];
+  for (let i = 0, line = 0, col = 0; i < colored.data.length; i += 5) {
+    col = colored.data[i] ? colored.data[i + 1] : col + colored.data[i + 1];
+    line += colored.data[i];
+    spans.push([line, col]);
+  }
+  assert.deepStrictEqual(spans, [[5, line5.indexOf('Item')], [5, line5.lastIndexOf('Store')], [8, types.lineAt(8).text.indexOf('Item')]],
+    'the code\'s types are colored, after a ":" in a line too, and the parameter name isn\'t');
+
+  // What goes along with Implement and Plan: where the step's names are in the code, and what it adds.
+  assert.strictEqual(await whereNames(vscode.Uri.file(dir), types.getText().split('\n')), [
+    "Where the code has what the step names, so you don't have to search:",
+    '- Store: store.ts:1 (class)',
+    '- Item: item.ts:1 (interface)',
+    'Not in the code yet: keep() in store.ts',
+  ].join('\n'));
+
+  // Add to step: what the cursor is on in the code goes into the step the spec's cursor is in, under what it lists already.
+  const addFile = path.join(dir, 'add.llmd');
+  fs.writeFileSync(addFile, '# Add\n## Grow\n@store.ts\n  - load()\n');
+  const add = await vscode.workspace.openTextDocument(addFile);
+  await vscode.window.showTextDocument(add, { viewColumn: vscode.ViewColumn.Two, selection: new vscode.Range(1, 0, 1, 0) });
+  const store = await vscode.window.showTextDocument(code, { viewColumn: vscode.ViewColumn.One });
+  store.selection = new vscode.Selection(2, 3, 2, 3); // in save()
+  await vscode.commands.executeCommand('llmd.addToStep');
+  assert.strictEqual(add.getText(), '# Add\n## Grow\n@store.ts\n  - load()\n  : Store\n    - save()\n', 'save() goes in under Store');
+  assert.strictEqual(vscode.window.activeTextEditor?.document, add, 'the spec opens');
+  assert.deepStrictEqual(vscode.window.activeTextEditor?.selection.active, new vscode.Position(5, 12), 'at the end of the new line');
+  await vscode.window.showTextDocument(store.document, { viewColumn: vscode.ViewColumn.One, selection: new vscode.Range(2, 3, 2, 3) });
+  await vscode.commands.executeCommand('llmd.addToStep');
+  assert.strictEqual(add.getText(), '# Add\n## Grow\n@store.ts\n  - load()\n  : Store\n    - save()\n', 'twice adds nothing');
+  await vscode.commands.executeCommand('llmd.addToStep', item, [item]);
+  assert.strictEqual(add.getText(), '# Add\n## Grow\n@store.ts\n  - load()\n  : Store\n    - save()\n\n@item.ts\n', 'a file from the Explorer');
+  await vscode.commands.executeCommand('workbench.action.joinAllGroups'); // back to one column, for the run
 }
 
 // A fake agent stands in for claude: it logs its arguments, ticks the step in the spec like the real one would,

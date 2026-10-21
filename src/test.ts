@@ -1,8 +1,8 @@
 import * as assert from 'assert';
 import { agentArgs, allowRules, render, stepPrompt } from './agent';
-import { OutlineNode, openSteps, parseOutline, stepSection } from './outline';
+import { OutlineNode, openSteps, parseOutline, placeIn, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
-import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, symbolName, typeSpans, unitAbove } from './symbols';
+import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, ownerAbove, receiverOf, symbolName, typeSpans } from './symbols';
 
 const text = [
   '- see @api/upload.go.',
@@ -154,6 +154,9 @@ const sameName = [
 ].join('\n');
 assert.strictEqual(indexSymbols(parseOutline(sameName)).get('book')?.kind, 'type', 'a type wins over a file with the same name');
 assert.deepStrictEqual(typeSpans(sameName, parseOutline(sameName)).map((s) => `${s.line}:${s.start}`), ['4:10', '6:16'], 'CreateBook(:book) colors book');
+const inline = ['@main.go', '  - main()', '    - extend the : book and :Author', '    - but not time: Now or : sql.DB', '  : book'].join('\n');
+assert.deepStrictEqual(typeSpans(inline, parseOutline(inline), ['Author']).map((s) => `${s.line}:${inline.split('\n')[s.line].slice(s.start, s.end)}`),
+  ['2:book', '2:Author'], '":Name" in a line is a type, like "@path" is a file');
 assert.ok(builtinTypes(models).includes('float64') && !builtinTypes(models).includes('i32'));
 assert.ok(builtinTypes('lang: rust').includes('i32') && builtinTypes('no lang').includes('i32'));
 assert.ok(inTypePosition('    - id: in', 12) && inTypePosition('- Save(b bo', 11));
@@ -185,9 +188,25 @@ const code = new Set(['Store', 'save']);
 assert.ok(!isNew(store, code), 'a method that exists in its @ file is never colored as new');
 assert.ok(isNew(fresh, undefined), 'every method under a +unit is new, without asking a language server');
 assert.ok(isNew(planned, code) && !isNew(planned, undefined), 'a name the file lacks is new; no symbols is no verdict');
-// The unit a new line lists members of: under the unit or one of its types, not on a logic line.
+// What a new line lists members of: the unit, and the type it's under; nothing on a logic line.
 const members = ['## Step', '@src/store.ts', '  : Store', '    - sa', '  - lo', '    - read the ', '+src/new.ts', '  - ', '- top'].join('\n');
-assert.deepStrictEqual([3, 4, 5, 7, 8, 0].map((l) => unitAbove(members, l)), ['src/store.ts', 'src/store.ts', undefined, 'src/new.ts', undefined, undefined]);
+assert.deepStrictEqual([3, 4, 5, 7, 8, 0].map((l) => ownerAbove(members, l)), [{ unit: 'src/store.ts', type: 'Store' }, { unit: 'src/store.ts', type: undefined },
+  undefined, { unit: 'src/new.ts', type: undefined }, undefined, undefined]);
+assert.deepStrictEqual(ownerAbove('@src/a.ts\n  : ', 1), { unit: 'src/a.ts', type: undefined }, 'a type line lists the file');
+assert.deepStrictEqual(claimed.map((c) => c.type), [undefined, 'Store', undefined, undefined, undefined, undefined], 'a method knows the type it is under');
+assert.deepStrictEqual(['(*Book).Save', '(Book).Load', 'Save'].map(receiverOf), ['Book', 'Book', undefined]);
+
+// Adding code to a step: under what the step already lists, without repeating it.
+const plan = ['# App', '## Grow', '@src/store.ts', '  - load()', '', '## Next', '- x'].join('\n');
+const seg = (kind: 'unit' | 'type' | 'method' | 'line', name: string, text: string) => ({ kind, name, text });
+const unit = seg('unit', 'src/store.ts', '@src/store.ts');
+assert.deepStrictEqual(placeIn(plan, 1, [unit, seg('type', 'Store', ': Store'), seg('method', 'save', '- save()')]),
+  { after: 3, lines: ['  : Store', '    - save()'], at: 5 }, 'a type and its method go under the file the step lists');
+assert.deepStrictEqual(placeIn(plan, 1, [unit, seg('method', 'load', '- load()')]), { after: 3, lines: [], at: 3 }, 'what it lists is not repeated');
+assert.deepStrictEqual(placeIn(plan, 1, [seg('unit', 'src/a.ts', '@src/a.ts'), seg('line', 'MAX', '- MAX')]),
+  { after: 3, lines: ['', '@src/a.ts', '  - MAX'], at: 6 }, 'a new file goes after a blank line, at the end of the step');
+assert.deepStrictEqual(placeIn('## Empty\n\n', 0, [unit]), { after: 0, lines: ['@src/store.ts'], at: 1 }, 'an empty step starts right under its heading');
+assert.deepStrictEqual(placeIn(['## S', '@src/store.ts', '    - MAX'].join('\n'), 0, [unit, seg('line', 'MAX', '- MAX')]), { after: 2, lines: [], at: 2 });
 assert.deepStrictEqual(['Add(double, double)', '(*Book).Save', 'List<T>', 'Store.save', ' main '].map(symbolName),
   ['Add', 'Save', 'List', 'save', 'main']);
 

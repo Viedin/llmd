@@ -99,3 +99,42 @@ export function stepSection(text: string, title: string): { line: number; done: 
   const box = heading.exec(lines[start])![1];
   return { line: start, done: !!box && box !== ' ', lines: lines.slice(start, end) };
 }
+
+// A line the spec gets for something in the code: its file, a type in it, or a method or other member of either.
+export interface Segment {
+  kind: 'unit' | 'type' | 'method' | 'line';
+  name: string;
+  text: string; // "@src/store.ts", ": Store", "- save()", "- MAX"
+}
+
+// Where `path` goes in the step whose heading is on line `step`: the lines it doesn't list yet, to go in after line
+// `after`, and `at`, the line of the last segment once they're in. What the step already lists is used, not repeated.
+// ponytail: a member that isn't a method matches by its whole line only
+export function placeIn(text: string, step: number, path: Segment[]): { after: number; lines: string[]; at: number } {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
+  const find = (nodes: OutlineNode[]): OutlineNode | undefined =>
+    nodes.map((n) => (n.line === step ? n : find(n.children))).find(Boolean);
+  let parent = find(parseOutline(text));
+  if (parent?.kind !== 'heading') throw new Error(`No step on line ${step}`);
+  let depth = 0;
+  for (; depth < path.length; depth++) {
+    const s = path[depth];
+    const p: OutlineNode = parent;
+    if (s.kind === 'line') {
+      const at = lines.findIndex((l, i) => i > p.line && i <= p.endLine && l.trim() === s.text);
+      if (at >= 0) return { after: at, lines: [], at };
+      break;
+    }
+    const child = p.children.find((c) => c.kind === s.kind && c.name === s.name);
+    if (!child) break;
+    parent = child;
+  }
+  if (depth === path.length) return { after: parent.line, lines: [], at: parent.line };
+  const indentOf = (n: OutlineNode) => lines[n.line].search(/\S/);
+  const first = parent.children.find((c) => c.kind !== 'heading');
+  const indent = parent.kind === 'heading' ? 0 : first ? indentOf(first) : indentOf(parent) + 2;
+  const missing = path.slice(depth).map((s, i) => ' '.repeat(indent + 2 * i) + s.text);
+  // A new file in a step that lists more gets a blank line before it, like the others.
+  if (parent.kind === 'heading' && parent.endLine > parent.line) missing.unshift('');
+  return { after: parent.endLine, lines: missing, at: parent.endLine + missing.length };
+}

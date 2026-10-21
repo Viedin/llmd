@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { codeHover, missing, onDidChangeCode, symbolsOf, watchCode } from './code';
-import { OutlineNode, openSteps, parseOutline, stepSection } from './outline';
-import { done, hasRun, initRuns, onDidChangeRuns, openRun, rootOf, runKey, runs, runStep } from './run';
+import { CALLABLE, codeHover, CodeSymbol, CONTAINERS, missing, onDidChangeCode, searchTypes, symbolOf, symbolsOf, typeNamed, TYPES, watchCode } from './code';
+import { OutlineNode, openSteps, parseOutline, placeIn, Segment, stepSection } from './outline';
+import { done, hasRun, initRuns, nextSteps, onDidChangeRuns, openRun, rootOf, runKey, runs, runStep } from './run';
 import { findRefs } from './refs';
-import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, typeSpans, unitAbove } from './symbols';
+import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, ownerAbove, receiverOf, symbolName, typeSpans, typeWords, unitsOf } from './symbols';
 
 async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
   try {
@@ -62,6 +62,26 @@ const claimAt = (doc: vscode.TextDocument, pos: vscode.Position) =>
 
 const codeOf = (doc: vscode.TextDocument, path: string) => symbolsOf(vscode.Uri.joinPath(rootOf(doc.uri), path));
 
+// The types of the files the spec lists, by name, with the file.
+async function codeTypes(doc: vscode.TextDocument): Promise<[string, CodeSymbol, string][]> {
+  const found: [string, CodeSymbol, string][] = [];
+  for (const unit of new Set(unitsOf(parseOutline(doc.getText())))) {
+    for (const [name, s] of (await codeOf(doc, unit)) ?? []) if (TYPES.has(s.kind)) found.push([name, s, unit]);
+  }
+  return found;
+}
+
+// The code's type of this name: in a file the spec lists, else anywhere in the project.
+const codeType = (doc: vscode.TextDocument, name: string) => typeNamed(rootOf(doc.uri), unitsOf(parseOutline(doc.getText())), name);
+
+// The word the cursor is on that may name a type: in a signature, a logic line or a free line, not in a path or heading.
+function typeWordAt(doc: vscode.TextDocument, pos: vscode.Position) {
+  const line = doc.lineAt(pos).text;
+  const range = doc.getWordRangeAtPosition(pos, /(?<![\w.])[A-Za-z_]\w*(?![\w.])/); // not sql.DB's parts
+  if (!range || inPath(line, pos.character) || /^\s*#/.test(line)) return;
+  return { name: doc.getText(range), range };
+}
+
 // The types and methods the spec plans that the code doesn't have yet: under a + unit, or missing from their @ file.
 export async function newRanges(doc: vscode.TextDocument): Promise<vscode.Range[]> {
   const ranges: vscode.Range[] = [];
@@ -71,49 +91,51 @@ export async function newRanges(doc: vscode.TextDocument): Promise<vscode.Range[
   return ranges;
 }
 
-// On a type or method the code has: its real hover. On one it doesn't have yet: that it's new.
+// On a type or method the code has, anywhere in a line: its real hover. On one it doesn't have yet: that it's new.
 async function hover(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.Hover | undefined> {
   const c = claimAt(doc, pos);
-  if (!c) return;
+  if (!c) {
+    const word = typeWordAt(doc, pos);
+    const type = word && (await codeType(doc, word.name));
+    const md = type && (await codeHover(type.at));
+    return md && new vscode.Hover(md, word.range);
+  }
   const range = nameRange(doc, c);
   if (c.newFile) return new vscode.Hover(`New: \`${c.path}\` is a new file`, range);
   const names = await codeOf(doc, c.path);
-  const symbol = names?.get(c.name);
+  const symbol = symbolOf(names, c);
   if (!symbol) return names && new vscode.Hover(`New: \`${c.path}\` has no \`${c.name}\` yet`, range);
   const md = await codeHover(symbol.at);
   return md && new vscode.Hover(md, range);
 }
 
-// Ctrl+click on a type or method the code has opens it in its file; on a name in a logic line, its line in the spec.
+// Ctrl+click on a type or method the code has, listed under its file, opens it there. Any other name goes to where the
+// spec declares it, else to the code's type of that name.
 export async function findDefinition(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.Location | undefined> {
   const c = claimAt(doc, pos);
-  const symbol = c && (await codeOf(doc, c.path))?.get(c.name);
+  const symbol = c && symbolOf(await codeOf(doc, c.path), c);
   if (symbol) return symbol.at;
   const range = doc.getWordRangeAtPosition(pos, /[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?/);
   if (!range || inPath(doc.lineAt(pos).text, pos.character)) return; // @paths open the file instead
   const [name, member] = doc.getText(range).split('.');
   const declared = indexOf(doc).get(name);
-  if (!declared) return;
   const onMember = member !== undefined && pos.character > range.start.character + name.length;
-  const line = onMember ? declared.members.get(member) : declared.line;
-  if (line === undefined) return;
-  return new vscode.Location(doc.uri, new vscode.Position(line, doc.lineAt(line).firstNonWhitespaceCharacterIndex));
+  const line = onMember ? declared?.members.get(member) : declared?.line;
+  if (line !== undefined) return new vscode.Location(doc.uri, new vscode.Position(line, doc.lineAt(line).firstNonWhitespaceCharacterIndex));
+  const word = !c && typeWordAt(doc, pos);
+  return word ? (await codeType(doc, word.name))?.at : undefined;
 }
 
-const CALLABLE = new Set([vscode.SymbolKind.Method, vscode.SymbolKind.Function, vscode.SymbolKind.Constructor]);
-const TYPES = new Set([vscode.SymbolKind.Class, vscode.SymbolKind.Interface, vscode.SymbolKind.Struct, vscode.SymbolKind.Enum]);
 const symbolAt = new WeakMap<vscode.CompletionItem, vscode.Location>(); // where a completion's symbol is, for its docs
 
-// The unit's real types and methods, written the spec's way: "save()" and ": Store".
-async function codeCompletions(doc: vscode.TextDocument, unit: string): Promise<vscode.CompletionItem[]> {
-  return [...((await codeOf(doc, unit)) ?? [])].map(([name, s]) => {
-    const kind = CALLABLE.has(s.kind) ? vscode.CompletionItemKind.Method : TYPES.has(s.kind) ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.Field;
-    const item = new vscode.CompletionItem(name, kind);
-    item.insertText = CALLABLE.has(s.kind) ? `${name}()` : TYPES.has(s.kind) ? `: ${name}` : name;
-    item.detail = s.detail || unit;
-    symbolAt.set(item, s.at);
-    return item;
-  });
+// A real symbol as a completion, by default written the spec's way: "save()" and ": Store".
+function codeCompletion(name: string, s: CodeSymbol, where: string, insert = CALLABLE.has(s.kind) ? `${name}()` : TYPES.has(s.kind) ? `: ${name}` : name) {
+  const kind = CALLABLE.has(s.kind) ? vscode.CompletionItemKind.Method : TYPES.has(s.kind) ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.Field;
+  const item = new vscode.CompletionItem(name, kind);
+  item.insertText = insert;
+  item.detail = s.detail || where;
+  symbolAt.set(item, s.at);
+  return item;
 }
 
 // A completion of a real symbol gets its docs when it's picked out in the list.
@@ -123,13 +145,46 @@ async function resolveCompletion(item: vscode.CompletionItem) {
   return item;
 }
 
-export async function completeNames(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
+// The types to offer where one goes: those of the files the spec lists and the spec's own first, then the rest of the
+// project's that its language's search finds for the word you're typing, then the built-in ones. The list asks again as
+// you type, for that search.
+async function typeCompletions(doc: vscode.TextDocument, before: string, builtin: boolean): Promise<vscode.CompletionList> {
+  const pad = /(^|[^(<[]):$/.test(before) ? ' ' : ''; // ": Store", and "(:Store)" as typed
+  const word = before.match(/\w*$/)![0];
+  const root = rootOf(doc.uri);
+  const seen = new Set<string>();
+  const items: vscode.CompletionItem[] = [];
+  const add = (item: vscode.CompletionItem, group: string) => {
+    const name = item.label as string;
+    if (seen.has(name)) return;
+    seen.add(name);
+    item.insertText ??= pad + name;
+    item.sortText = group + name;
+    items.push(item);
+  };
+  for (const [name, s, unit] of await codeTypes(doc)) add(codeCompletion(name, s, unit, pad + name), '0');
+  for (const [name, d] of indexOf(doc)) if (d.kind === 'type') add(new vscode.CompletionItem(name, vscode.CompletionItemKind.Class), '0');
+  for (const s of (word && (await searchTypes(root, word))) || []) {
+    const name = symbolName(s.name);
+    add(codeCompletion(name, { kind: s.kind, detail: '', at: s.location, members: new Map() }, path.relative(root.fsPath, s.location.uri.fsPath), pad + name), '1');
+  }
+  if (builtin) for (const t of builtinTypes(doc.getText())) add(new vscode.CompletionItem(t, vscode.CompletionItemKind.TypeParameter), '2');
+  return new vscode.CompletionList(items, true);
+}
+
+export async function completeNames(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
   const text = doc.lineAt(pos).text;
   if (inPath(text, pos.character)) return [];
-  // A new line under a unit offers what its file really has.
-  const unit = /^\s*-\s+\w*$/.test(text.slice(0, pos.character)) && unitAbove(doc.getText(), pos.line);
-  const code = unit ? await codeCompletions(doc, unit) : [];
-  if (code.length) return code;
+  // After a ":" the types, anywhere in a line. A new line under a unit offers what its file really has, and under one of
+  // its types, that type's members.
+  const before = text.slice(0, pos.character);
+  if (/(?<![\w:]):\s*\w*$/.test(before)) return typeCompletions(doc, before, inTypePosition(text, pos.character));
+  const owner = /^\s*-\s+\w*$/.test(before) && ownerAbove(doc.getText(), pos.line);
+  if (owner) {
+    const names = await codeOf(doc, owner.unit);
+    const code = [...((owner.type ? names?.get(owner.type)?.members : names) ?? [])].map(([name, s]) => codeCompletion(name, s, owner.unit));
+    if (code.length) return code;
+  }
   const index = indexOf(doc);
   const dot = text.slice(0, pos.character).match(/(?<![\w.])([A-Za-z_]\w*)\.(\w*)$/);
   if (dot) {
@@ -140,12 +195,7 @@ export async function completeNames(doc: vscode.TextDocument, pos: vscode.Positi
       return new vscode.CompletionItem(member, kind);
     });
   }
-  if (inTypePosition(text, pos.character)) {
-    const declared = [...index].filter(([, d]) => d.kind === 'type').map(([name]) => new vscode.CompletionItem(name, vscode.CompletionItemKind.Class));
-    const builtin = builtinTypes(doc.getText()).filter((t) => !index.has(t)).map((t) => new vscode.CompletionItem(t, vscode.CompletionItemKind.TypeParameter));
-    declared.forEach((i) => (i.sortText = '0' + i.label)); // the spec's own types first
-    return [...declared, ...builtin];
-  }
+  if (inTypePosition(text, pos.character)) return typeCompletions(doc, before, true);
   if (text.slice(0, pos.character).endsWith(':')) return [];
   return [...index].map(([name, d]) =>
     new vscode.CompletionItem(name, d.kind === 'type' ? vscode.CompletionItemKind.Class : vscode.CompletionItemKind.File));
@@ -153,14 +203,94 @@ export async function completeNames(doc: vscode.TextDocument, pos: vscode.Positi
 
 const typeLegend = new vscode.SemanticTokensLegend(['type']);
 
-function typeTokens(doc: vscode.TextDocument): vscode.SemanticTokens {
+// The spec's, the language's and the code's types in field types and signatures.
+async function typeTokens(doc: vscode.TextDocument): Promise<vscode.SemanticTokens> {
   const text = doc.getText();
+  const nodes = parseOutline(text);
+  const names = [...new Set(typeWords(text, nodes).map((w) => w.name))];
+  const code = (await Promise.all(names.map(async (name) => (await codeType(doc, name)) && name))).filter((n): n is string => !!n);
   const tokens = new vscode.SemanticTokensBuilder(typeLegend);
-  for (const s of typeSpans(text, parseOutline(text))) tokens.push(s.line, s.start, s.end - s.start, 0);
+  for (const s of typeSpans(text, nodes, code)) tokens.push(s.line, s.start, s.end - s.start, 0);
   return tokens.build();
 }
 
-const SKIP = new Set(['.git', 'node_modules', 'out', 'dist', 'build', 'bin', 'obj', '.vscode-test']);
+// What the cursor is on in a code file, as the spec writes it: the file, the types around it, and the method or other
+// member it's in. Just the file when its language gives no symbols.
+async function segmentsAt(doc: vscode.TextDocument, pos: vscode.Position, unit: string): Promise<Segment[]> {
+  const path: Segment[] = [{ kind: 'unit', name: unit, text: '@' + unit }];
+  let list: (vscode.DocumentSymbol | vscode.SymbolInformation)[] = [];
+  try {
+    list = (await vscode.commands.executeCommand<typeof list>('vscode.executeDocumentSymbolProvider', doc.uri)) ?? [];
+  } catch {}
+  for (;;) {
+    // ponytail: only providers that nest their symbols, which today's do
+    const s = list.find((s): s is vscode.DocumentSymbol => 'children' in s && s.range.contains(pos));
+    if (!s) return path;
+    const name = symbolName(s.name);
+    const receiver = receiverOf(s.name);
+    if (receiver) path.push({ kind: 'type', name: receiver, text: ': ' + receiver });
+    if (TYPES.has(s.kind)) path.push({ kind: 'type', name, text: ': ' + name });
+    else if (CALLABLE.has(s.kind)) return [...path, { kind: 'method', name, text: `- ${name}()` }];
+    else if (!CONTAINERS.has(s.kind)) return [...path, { kind: 'line', name, text: '- ' + name }];
+    list = s.children;
+  }
+}
+
+// The step to add to: the one under the cursor in a spec you can see, else one of the project's open steps you pick.
+async function pickStep(root: vscode.Uri): Promise<{ doc: vscode.TextDocument; line: number } | undefined> {
+  for (const editor of vscode.window.visibleTextEditors) {
+    if (editor.document.languageId !== 'llmd') continue;
+    for (let i = editor.selection.active.line; i >= 0; i--) {
+      const text = editor.document.lineAt(i).text;
+      if (/^##\s/.test(text)) return { doc: editor.document, line: i };
+      if (/^#\s/.test(text)) break;
+    }
+  }
+  const steps = await nextSteps(root);
+  if (!steps.length) return void vscode.window.showInformationMessage('No open steps to add it to. Make one with LLMD: New feature.');
+  const picked = steps.length === 1 ? steps[0]
+    : (await vscode.window.showQuickPick(steps.map((s) => ({ label: s.step, description: s.where, s })), { placeHolder: 'Add it to which step?' }))?.s;
+  if (!picked) return;
+  const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(picked.spec));
+  const line = stepSection(doc.getText(), picked.step)?.line;
+  return line === undefined ? undefined : { doc, line };
+}
+
+// Puts what you're on in the code into a step: from the editor, the method or type under the cursor; from the Explorer,
+// the files and folders you picked. What the step already lists is used, not repeated.
+async function addToStep(uri?: vscode.Uri, picked?: vscode.Uri[]) {
+  const editor = vscode.window.activeTextEditor;
+  const targets = Array.isArray(picked) && picked.length ? picked : [uri instanceof vscode.Uri ? uri : editor?.document.uri].filter((u): u is vscode.Uri => !!u);
+  if (!targets.length) return;
+  const step = await pickStep(rootOf(targets[0]));
+  if (!step) return;
+  const { doc } = step;
+  const root = rootOf(doc.uri);
+  let at = step.line;
+  for (const target of targets) {
+    const rel = path.relative(root.fsPath, target.fsPath).split(path.sep).join('/');
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+      vscode.window.showWarningMessage(`${path.basename(target.fsPath)} isn't in the project of ${path.basename(doc.uri.fsPath)}.`);
+      continue;
+    }
+    const folder = ((await statOrNull(target))?.type ?? 0) & vscode.FileType.Directory;
+    const inEditor = !Array.isArray(picked) && editor?.document.uri.toString() === target.toString();
+    const segments = folder ? [{ kind: 'unit' as const, name: rel + '/', text: `@${rel}/` }]
+      : inEditor ? await segmentsAt(editor!.document, editor!.selection.active, rel) : [{ kind: 'unit' as const, name: rel, text: '@' + rel }];
+    const place = placeIn(doc.getText(), step.line, segments);
+    if (place.lines.length) {
+      const edit = new vscode.WorkspaceEdit();
+      edit.insert(doc.uri, doc.lineAt(place.after).range.end, '\n' + place.lines.join('\n'));
+      await vscode.workspace.applyEdit(edit);
+    }
+    at = place.at;
+  }
+  const end = doc.lineAt(at).range.end;
+  const shown = vscode.window.visibleTextEditors.find((e) => e.document === doc);
+  await vscode.window.showTextDocument(doc, { viewColumn: shown?.viewColumn ?? vscode.ViewColumn.Beside, selection: new vscode.Range(end, end) });
+}
+
+const SKIP = new Set(['.git', '.llmd', 'node_modules', 'out', 'dist', 'build', 'bin', 'obj', '.vscode-test']);
 
 // Every file and folder under root, as "a/b/c.go" and "a/b/", for @ search.
 // ponytail: walks the disk on each @ and stops at 5000 entries; cache it if big repos feel slow.
@@ -297,6 +427,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('llmd.implement', (uri: vscode.Uri, step: string) => runStep('implement', uri, step)),
     vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runStep('plan', uri, step)),
     vscode.commands.registerCommand('llmd.done', (spec: vscode.Uri, step: string) => done(openRun(spec, step))),
+    vscode.commands.registerCommand('llmd.addToStep', addToStep),
     vscode.languages.registerCodeLensProvider(selector, {
       onDidChangeCodeLenses: lensChanges.event,
       provideCodeLenses: async (doc) => {
@@ -339,7 +470,24 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerDefinitionProvider(selector, { provideDefinition: findDefinition }),
     vscode.languages.registerHoverProvider(selector, { provideHover: hover }),
     vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: completeNames, resolveCompletionItem: resolveCompletion }, '.', ':'),
-    vscode.languages.registerDocumentSemanticTokensProvider(selector, { provideDocumentSemanticTokens: typeTokens }, typeLegend),
+    vscode.languages.registerDocumentSemanticTokensProvider(selector, { onDidChangeSemanticTokens: onDidChangeCode, provideDocumentSemanticTokens: typeTokens }, typeLegend),
+
+    // A file dragged in from the Explorer, with Shift held, goes in as @path.
+    vscode.languages.registerDocumentDropEditProvider(selector, {
+      async provideDocumentDropEdits(doc, _pos, data) {
+        const root = rootOf(doc.uri);
+        const refs: string[] = [];
+        for (const line of ((await data.get('text/uri-list')?.asString()) ?? '').split(/\r?\n/)) {
+          if (!line.trim()) continue;
+          const uri = vscode.Uri.parse(line.trim());
+          const rel = path.relative(root.fsPath, uri.fsPath).split(path.sep).join('/');
+          if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue;
+          const folder = ((await statOrNull(uri))?.type ?? 0) & vscode.FileType.Directory;
+          refs.push('@' + rel + (folder ? '/' : ''));
+        }
+        return refs.length ? new vscode.DocumentDropEdit(refs.join('\n')) : undefined;
+      },
+    }),
 
     vscode.languages.registerDocumentLinkProvider(selector, {
       provideDocumentLinks: async (doc) => (await scan(doc)).links,

@@ -18,7 +18,9 @@ export interface Claim {
   path: string;
   name: string;
   line: number;
+  kind: 'type' | 'method';
   newFile: boolean; // under a + unit
+  type?: string; // the type it's listed under
 }
 
 // The types and methods the spec lists under its units, which the code either has or is going to get.
@@ -27,26 +29,34 @@ export function claims(nodes: OutlineNode[]): Claim[] {
   return nodes.flatMap((n) => {
     if (n.kind === 'heading') return claims(n.children);
     if (n.kind !== 'unit') return [];
-    const inside = (nodes: OutlineNode[]): Claim[] => nodes.flatMap((c) =>
-      c.kind === 'type' || c.kind === 'method' ? [{ path: n.name, name: c.name, line: c.line, newFile: n.detail === 'new file' }, ...inside(c.children)] : []);
+    const inside = (nodes: OutlineNode[], type?: string): Claim[] => nodes.flatMap((c) =>
+      c.kind === 'type' || c.kind === 'method'
+        ? [{ path: n.name, name: c.name, kind: c.kind, line: c.line, newFile: n.detail === 'new file', type }, ...inside(c.children, c.kind === 'type' ? c.name : type)]
+        : []);
     return inside(n.children);
   });
 }
+
+// The files the spec lists that exist, by @: not + ones, not folders.
+export const unitsOf = (nodes: OutlineNode[]): string[] => nodes.flatMap((n) =>
+  n.kind === 'heading' ? unitsOf(n.children) : n.kind === 'unit' && !n.detail && !n.name.endsWith('/') ? [n.name] : []);
 
 // Whether a claim is something the step adds: everything in a + unit, or a name its @ file's symbols don't have.
 // No symbols, as when the language has no extension, is no verdict: not new.
 export const isNew = (c: Claim, names?: { has(name: string): boolean }) => c.newFile || (!!names && !names.has(c.name));
 
-// The unit whose members `line` lists, directly or under one of its types: its path, or undefined on a logic line or
+// What `line` lists members of: its unit's path, and the type it's under if it's under one. undefined on a logic line or
 // outside a unit.
-export function unitAbove(text: string, line: number): string | undefined {
+export function ownerAbove(text: string, line: number): { unit: string; type?: string } | undefined {
   const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
   let indent = lines[line].search(/\S/);
+  let type: string | undefined;
   for (let i = line - 1; i >= 0 && indent > 0; i--) {
     const at = lines[i].search(/\S/);
     if (at < 0 || at >= indent) continue;
     const unit = lines[i].match(UNIT);
-    if (unit) return unit[2];
+    if (unit) return { unit: unit[2], type };
+    type ??= lines[i].match(TYPE)?.[1];
     if (!TYPE.test(lines[i])) return undefined;
     indent = at;
   }
@@ -78,6 +88,9 @@ function distance(a: string, b: string): number {
 export function symbolName(name: string): string {
   return name.replace(/^\(.*?\)\./, '').replace(/[(<].*$/, '').split('.').pop()!.trim();
 }
+
+// The type a Go method belongs to, which its language lists it next to rather than under: "(*Book).Save" is Book's.
+export const receiverOf = (name: string) => name.match(/^\(\*?(\w+)\)\./)?.[1];
 
 const PATH = /(?<![\w@])[@+][\w\-./]+/g;
 const CALL = /(?<![\w./-])([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g;
@@ -145,22 +158,38 @@ export function inTypePosition(line: string, col: number): boolean {
   return !!m && col >= m[0].length;
 }
 
-// Known type names (built-in or declared in the spec) in field types and method signatures, for coloring.
-export function typeSpans(text: string, nodes: OutlineNode[]): { line: number; start: number; end: number }[] {
-  const known = new Set(builtinTypes(text));
-  for (const [name, d] of indexSymbols(nodes)) if (d.kind === 'type') known.add(name);
-  const lines = text.split('\n');
-  const spans: { line: number; start: number; end: number }[] = [];
+// The words that could be types: in field types and method signatures, parameter names too but not sql.DB's parts, and
+// ":Name" in any other line, the way "@path" is a file anywhere: "- extend the : application".
+export function typeWords(text: string, nodes: OutlineNode[]): { name: string; line: number; start: number; end: number }[] {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
+  const words: { name: string; line: number; start: number; end: number }[] = [];
+  const listed = new Set<number>();
   const walk = (nodes: OutlineNode[]) => nodes.forEach((n) => {
+    listed.add(n.line);
     if (n.kind === 'field' || n.kind === 'method') {
-      const line = lines[n.line].replace(/\r$/, '');
-      const from = line.indexOf(n.name) + n.name.length;
-      for (const m of line.slice(from).matchAll(/(?<![\w.])[A-Za-z_]\w*(?![\w.])/g)) {
-        if (known.has(m[0])) spans.push({ line: n.line, start: from + m.index!, end: from + m.index! + m[0].length });
+      const from = lines[n.line].indexOf(n.name) + n.name.length;
+      for (const m of lines[n.line].slice(from).matchAll(/(?<![\w.])[A-Za-z_]\w*(?![\w.])/g)) {
+        words.push({ name: m[0], line: n.line, start: from + m.index!, end: from + m.index! + m[0].length });
       }
     }
     walk(n.children);
   });
   walk(nodes);
-  return spans;
+  let inFence = false;
+  lines.forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    if (inFence || listed.has(i) || /^\s*#/.test(line)) return;
+    for (const m of line.matchAll(/(?<![\w:]):\s*([A-Za-z_]\w*)(?![\w.])/g)) {
+      const start = m.index! + m[0].length - m[1].length;
+      words.push({ name: m[1], line: i, start, end: start + m[1].length });
+    }
+  });
+  return words.sort((a, b) => a.line - b.line || a.start - b.start);
+}
+
+// Known type names among typeWords, for coloring: built-in, declared in the spec, or in `code`.
+export function typeSpans(text: string, nodes: OutlineNode[], code: Iterable<string> = []): { line: number; start: number; end: number }[] {
+  const known = new Set([...builtinTypes(text), ...code]);
+  for (const [name, d] of indexSymbols(nodes)) if (d.kind === 'type') known.add(name);
+  return typeWords(text, nodes).filter((w) => known.has(w.name));
 }

@@ -43,7 +43,8 @@
       { "command": "llmd.plan", "title": "LLMD: Plan step" },
       { "command": "llmd.newFeature", "title": "LLMD: New feature" },
       { "command": "llmd.run", "title": "LLMD: Open step run" },
-      { "command": "llmd.done", "title": "LLMD: Done with step" }
+      { "command": "llmd.done", "title": "LLMD: Done with step" },
+      { "command": "llmd.addToStep", "title": "LLMD: Add to step" }
     ],
     "configuration": {
       "title": "LLMD",
@@ -61,7 +62,14 @@
         { "command": "llmd.implement", "when": "false" },
         { "command": "llmd.plan", "when": "false" },
         { "command": "llmd.run", "when": "false" },
-        { "command": "llmd.done", "when": "false" }
+        { "command": "llmd.done", "when": "false" },
+        { "command": "llmd.addToStep", "when": "resourceScheme == file && editorLangId != llmd" }
+      ],
+      "editor/context": [
+        { "command": "llmd.addToStep", "when": "resourceScheme == file && editorLangId != llmd", "group": "llmd" }
+      ],
+      "explorer/context": [
+        { "command": "llmd.addToStep", "when": "resourceExtname != .llmd", "group": "llmd" }
       ]
     },
     "keybindings": [

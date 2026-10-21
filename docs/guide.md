@@ -64,9 +64,9 @@ lang: csharp
 | `# Title` | The spec's title. | Heading color. Shows in the outline. |
 | `lang: csharp` | The language and stack, once at the top. | Nothing. It's for the agent. |
 | `## Title` | A step. The agent makes it `## [x] Title` once it's built. | Shows in the outline. A ticked step is greyed out, with **✓ Done** above it once the code has what it lists. |
-| `@Program.cs` | An **existing** file. Lines under it say what the step adds or changes in it. | Ctrl+click opens the file. A warning if the file doesn't exist. A new line under it completes the file's real methods. |
+| `@Program.cs` | An **existing** file. Lines under it say what the step adds or changes in it. | Ctrl+click opens the file. A warning if the file doesn't exist. A new line under it completes the file's real types and methods. |
 | `+HandleUser.cs` | A **new** file to create. A folder works too, e.g. `+cmd/internal/models` for a Go package. | Shown as "new file" in the outline. Everything under it is green: new. |
-| `: Calculator` or `- : Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. |
+| `: Calculator` or `- : Calculator` | A type, class or struct in the file above. Leave it out if the file only has one. | Type color. Shows in the outline. After `: `, completion offers the spec's files' real types, and as you type, any type your project has. Green while its file doesn't have it; hover shows the real one, Ctrl+click opens it. |
 | `- total: double` | A field (no parentheses). | Shows in the outline. |
 | `- Add(a, b) -> double` | A method or function (it has parentheses). `-> ...` is the return type and is optional. | Shows in the outline. Green while its file doesn't have it; hover shows the real one, Ctrl+click opens it. |
 | `- line` under a method | Logic, in order. Say what should happen, not the exact code. | Nothing special. |
@@ -149,12 +149,14 @@ A `!` line is a check: something that must be true once the step is built. Put i
 ### Editor help while you write
 
 - **`@`** searches every file and folder in your project: `@book` finds `cmd/internal/models/book.go`. Type `/` to go into a folder one level at a time. A `+` at the start of a line does the same, for new files in existing folders. Paths start from the project root: the folder holding `.llmd/`. For a spec outside `.llmd/`, they start from the folder you have open, or from the spec's own folder if you opened just the file.
-- **Types:** after `- id:`, in a method's parameters and after `->`, completion offers the types declared in the spec first, then the built-in types for its `lang:`. Those names are colored as types, so a misspelled type stays plain.
+- **Types:** after `- id:`, in a method's parameters and after `->`, completion offers the types of the files the spec lists and the spec's own first, then, as you type, any type your project has (`app` finds `application` in `handler.go`), then the built-in types for its `lang:`. Those names are colored as types, and so is any type your project has, so a misspelled type stays plain. Hovering a type your project has, in any line, shows the real one, and Ctrl+click opens it, unless the spec declares it: then it goes there.
+- **`:` names a type anywhere,** the way `@` names a file: in `- extend the : application`, typing after the `:` completes your project's types, and a type it has is colored, with its hover and Ctrl+click.
 - **`HandleUser.`** lists that file's or type's methods and fields. Typing a plain word suggests the types and file names you've declared.
 - **Enter** after a file line, a `: Type` line or a method line starts the next line one level in, with `- ` already typed. After any other `- `, `* ` or `! ` line, Enter starts a new one at the same level.
 - **Enter on an empty `- `, `* ` or `! `** steps back out one level and keeps the bullet, so pressing Enter twice after a method's last logic line starts the next method. At the outermost level it removes the `- `.
-- **The code, while you write.** Under an `@` file, a new `- ` line completes the file's real types and methods, with their docs. Hovering a method the file has shows its real signature and doc comment, and Ctrl+click opens it in the file. A type or method the file doesn't have yet is green, so you see at a glance what the step adds; everything under a `+` file is green. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one are never green.
-- **Ctrl+click** opens `@` files, opens methods the code has, and jumps to `Name.method` definitions in the spec.
+- **The code, while you write.** Under an `@` file, a new `- ` line completes the file's real types and methods, with their docs, and under a `: Type` line, that type's own members. Hovering a method the file has shows its real signature and doc comment, and Ctrl+click opens it in the file. A type or method the file doesn't have yet is green, so you see at a glance what the step adds; everything under a `+` file is green. The symbols come from the language's own VS Code extension, so install the one for your language (C# Dev Kit, Go, Python…). Files without one are never green.
+- **Ctrl+click** opens `@` files, opens types and methods the code has, and jumps to `Name.method` definitions in the spec.
+- **Add to step,** from the code. Right-click in a code file and pick **LLMD: Add to step**: the method or type the cursor is in goes into the step, as `@file`, `: Type` and `- method()`, under what the step already lists of them. It goes into the step your cursor is in, in a spec you can see beside the code, or else one you pick. The spec then opens with the cursor at the end of the new line, ready for what should change. Right-click files or folders in the Explorer to add them as `@` lines, or drag them into the spec with Shift held.
 - **▶ Implement** and **Plan** above each open step run the agent on it, to build it or to talk it through first, in the step's [run](#runs). Once a step has a run, **Run** takes their place: it goes back to the run, whose bar has Implement and Plan. **✓ Done** above a ticked step takes it out of the spec once the code has what it lists; until then it says what's missing, e.g. `Not in the code yet: src/store.ts has no 'remove'`.
 - **Outline:** the Outline panel, the breadcrumbs above the editor and **Ctrl+Shift+O** all show steps → files → types → methods.
 - **Warnings** (yellow squiggles, also in Ctrl+Shift+M) flag `@` paths that don't exist and likely typos in `Type.member`, with a suggestion: `Debouncer.Pussh` → "Did you mean 'Push'?". A member that isn't close to a declared one, like an inherited `DbContext.Database`, doesn't warn.
@@ -188,6 +190,8 @@ Claude runs headless, with `claude -p`, at the project root. **LLMD: Agent Comma
 ### Implement a step
 
 Click **▶ Implement** above an open step. It saves the spec and opens the step's [run](#runs), where the agent builds it. Answer its questions there.
+
+Implement and Plan tell the agent where the code has what the step names, so it doesn't spend time and tokens searching: `application: cmd/glucopher/handler.go:19 (struct)`, for the types and methods the step lists under its files and the types it names in signatures and after a `:`. They also say what the step lists that the code doesn't have yet. Nothing is stored in the spec: it's looked up from your language's extension each time, so it's never out of date.
 
 ### Plan a step
 
@@ -242,4 +246,4 @@ In a git repo, the agent offers to commit each finished step, with the step's ti
 - Ctrl+click works on `@` files but not on `@` folders.
 - If you press Enter very quickly after typing a method line, the `- ` is sometimes not added.
 - Done and the green "new" color only check that names exist in the right file, not signatures, fields or logic: the step's tick vouches for those. A folder unit, like a Go package, only has to exist.
-- A method is looked up in its whole file, not in the type it's listed under.
+- A method is looked up in the type it's listed under, then in its whole file, so one listed under the wrong type still counts as there.

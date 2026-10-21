@@ -24,7 +24,7 @@ lang: csharp
 
 LLMD has two parts:
 
-- **A VS Code extension** that makes `.llmd` a real language that knows your code: highlighting, `@` file completion, an outline, warnings for broken references, and, under a file, its real methods to complete, their hovers and Ctrl+click into the code. What a step adds is green. **▶ Implement** / **Plan** above each step turns the editor into the step's run: the step stays live on one side while the agent builds it, and you talk to it on the other.
+- **A VS Code extension** that makes `.llmd` a real language that knows your code: highlighting, `@` file completion, an outline, warnings for broken references, and, under a file, its real types and methods to complete, their hovers and Ctrl+click into the code. What a step adds is green. Right-click a method in your code and **Add to step** puts it in the plan. **▶ Implement** / **Plan** above each step turns the editor into the step's run: the step stays live on one side while the agent builds it, and you talk to it on the other.
 - **An agent skill** that teaches Claude Code, Codex and other agents what the syntax means and how to implement a step.
 
 **→ Read the [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md)** for the full syntax and workflow.
