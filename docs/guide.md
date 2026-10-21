@@ -187,6 +187,8 @@ The spec is where you write. When a step is ready, click **▶ Implement** or **
 
 Each step is its own chat, like a migration: a fresh session of the agent that knows the step, the spec and the code, not a long history. Plan and Implement of the same step share it. Once the step is done, the run is history, and the code is what was built. Runs come back after you restart VS Code.
 
+**Rather talk to the agent in its own CLI?** Set **Run In** to **Terminal** in LLMD's settings. The run then has a terminal on the right where the conversation would be, running the agent's command interactively on the step (Claude without `-p`, Codex without `exec`), and it asks for permissions as it would in your own terminal. The step on the left stays live, and you can click a `?`'s answers there while the agent waits for you. **■ Stop** in the bar ends the CLI, and so does closing the run's tab; Implement or Plan starts it again. Claude goes on in the step's session, so a step's conversation and its terminal are one chat; Codex starts a new one each time. **✓ Done** works as usual, and ends the CLI if it's still open.
+
 ### The agent
 
 Runs use Claude Code or Codex. Pick one under **Agent** in LLMD's settings: run **LLMD: Settings** from the Command Palette, or open VS Code's settings and go to Extensions → LLMD. The agent also writes the answers to a `?` and the commit message, and the buttons say its name: **✨ Ask Codex**, **✨ Write with Codex**. Install its CLI, sign in, and install the [skill](../README.md#the-skill) for it. A step's chat with one agent doesn't carry over to the other: switching starts the step's next message in a fresh session.

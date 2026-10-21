@@ -14,7 +14,17 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, theme];
 
 window.addEventListener('message', (e) => {
   if (e.data.type === 'commitMessage') return void ($('message').value = e.data.text);
-  if (e.data.type === 'theme') return void theme.replaceSync(e.data.css);
+  if (e.data.type === 'theme') {
+    theme.replaceSync(e.data.css);
+    if (term) term.options.theme = termTheme();
+    return;
+  }
+  // What the step's terminal wrote: all of it once the tab draws it, or since a new start, then each piece as it comes.
+  if (e.data.type === 'pty') {
+    if (e.data.full) attached = true, term?.reset();
+    if (term && attached) term.write(e.data.data);
+    return;
+  }
   const finishing = state && !reviewing(state) && reviewing(e.data);
   state = e.data;
   vscode.setState({ key: state.key }); // so the tab comes back on this step after a reload
@@ -48,6 +58,7 @@ function draw() {
   drawBar();
   drawStep();
   drawChat();
+  drawTerm();
   const input = $('input');
   input.placeholder = state.working ? `${state.agent} is working. Type your next message…` : `Reply to ${state.agent}, or ask about this step`;
   const send = $('send');
@@ -57,7 +68,7 @@ function draw() {
 }
 
 function status() {
-  if (state.working) return ['busy', state.mode === 'plan' ? 'Planning' : 'Implementing'];
+  if (state.working || (state.live && !state.ticked)) return ['busy', state.mode === 'plan' ? 'Planning' : 'Implementing'];
   if (state.done) return ['done', 'Done'];
   if (state.ticked) return ['wait', state.missing.length ? 'Ticked, not in the code yet' : 'Built, review and mark done'];
   if (state.messages.length) return ['wait', state.mode === 'plan' ? 'Plan ready, your turn' : 'Waiting for you'];
@@ -66,14 +77,14 @@ function status() {
 
 function drawBar() {
   const [kind, text] = status();
-  const open = !state.working && !state.ticked && !state.done;
+  const open = !state.working && !state.live && !state.ticked && !state.done;
   // Done is there once the agent ticked the step and the code has everything it lists.
   const finish = !state.working && state.ticked && !state.missing.length && !state.done;
   $('bar').innerHTML = `<span class="crumb">${esc(state.file)}</span><span class="sep">›</span><h1>${esc(state.step)}</h1>
     <span class="status ${kind}"><span class="pip"></span>${esc(text)}</span><span class="grow"></span>
     ${open ? '<button class="primary" data-act="implement">▶ Implement</button><button data-act="plan">Plan</button>' : ''}
     ${finish ? '<button class="primary" data-act="done" title="Take the step out of the spec: the code has it now">✓ Done</button>' : ''}
-    ${state.working ? '<button data-act="stop">■ Stop</button>' : ''}
+    ${state.working || state.live ? '<button data-act="stop">■ Stop</button>' : ''}
     ${state.done ? '' : '<button data-act="edit" title="Back to the spec, at this step">Edit spec</button>'}`;
 }
 
@@ -212,6 +223,45 @@ function drawChat() {
   log.innerHTML = (messages || `<div class="empty"><p>Ask ${esc(state.agent)} about this step, or click <b>▶ Implement</b> to build it.</p></div>`) +
     (state.working ? '<div class="working"><span></span><span></span><span></span></div>' : '');
   if (follow) log.scrollTop = log.scrollHeight;
+}
+
+// The agent's own CLI in the conversation's place, when LLMD's settings run steps in a terminal, drawn by xterm.js in
+// VS Code's terminal colors. What it writes comes from the extension, and your keys go back to it.
+let term;
+let attached = false; // it has had everything written before it, so what comes next goes on from there
+let wasLive = false;
+const cssVar = (name) => getComputedStyle(document.body).getPropertyValue(name).trim() || undefined;
+
+function termTheme() {
+  const theme = {
+    background: cssVar('--vscode-terminal-background') ?? cssVar('--vscode-editor-background'),
+    foreground: cssVar('--vscode-terminal-foreground') ?? cssVar('--vscode-editor-foreground'),
+    cursor: cssVar('--vscode-terminalCursor-foreground'),
+    selectionBackground: cssVar('--vscode-terminal-selectionBackground') ?? cssVar('--vscode-editor-selectionBackground'),
+  };
+  for (const c of ['Black', 'Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan', 'White']) {
+    theme[c.toLowerCase()] = cssVar(`--vscode-terminal-ansi${c}`);
+    theme[`bright${c}`] = cssVar(`--vscode-terminal-ansiBright${c}`);
+  }
+  return theme;
+}
+
+function drawTerm() {
+  document.body.classList.toggle('terminal', state.terminal);
+  if (state.terminal && !term) {
+    term = new Terminal({ fontFamily: cssVar('--vscode-editor-font-family'), fontSize: parseInt(cssVar('--vscode-editor-font-size')) || 13, theme: termTheme(), cursorBlink: true });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open($('term'));
+    term.onData((data) => vscode.postMessage({ type: 'input', data }));
+    term.onResize(({ cols, rows }) => vscode.postMessage({ type: 'resize', cols, rows }));
+    new ResizeObserver(() => fit.fit()).observe($('term'));
+    fit.fit();
+    vscode.postMessage({ type: 'resize', cols: term.cols, rows: term.rows });
+    vscode.postMessage({ type: 'attach' });
+  }
+  if (term && state.live && !wasLive) term.focus(); // it just started: type to it
+  wasLive = state.live;
 }
 
 // A message's parts, with runs of more than three tool calls folded into one "N actions" line. A refused tool call

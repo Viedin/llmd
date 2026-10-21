@@ -153,6 +153,11 @@ details.diff .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ell
 .working span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes pulse { from { opacity: 0.25; } to { opacity: 1; } }
 
+/* The agent's own CLI in the conversation's place, when steps run in a terminal */
+#term { display: none; flex: 1; min-height: 0; margin: 10px 0 0 14px; }
+body.terminal #term { display: block; }
+body.terminal #log, body.terminal #composer { display: none; }
+
 #composer {
   display: flex; align-items: flex-end; gap: 8px; width: calc(100% - 44px); max-width: 676px; margin: 0 auto 16px;
   padding: 7px 7px 7px 13px; border-radius: 16px;

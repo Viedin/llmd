@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { agentArgs, allowRules, answersIn, answersPrompt, render, startedIn, stepPrompt } from './agent';
+import { agentArgs, allowRules, answersIn, answersPrompt, render, startedIn, stepPrompt, terminalArgs } from './agent';
 import { OutlineNode, openSteps, parseOutline, placeIn, questionsOf, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
 import { themeCss } from './theme';
@@ -111,6 +111,9 @@ assert.deepStrictEqual(agentArgs('claude', 'x', undefined, true).args.slice(4, 6
 // Codex gets the prompt on stdin, and its sandbox before the session it resumes.
 assert.deepStrictEqual(agentArgs('codex', '-x', 'abc'), { args: ['--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', 'resume', 'abc'], input: '-x' });
 assert.deepStrictEqual(agentArgs('codex', 'x', undefined, true).args, ['--json', '--skip-git-repo-check', '--sandbox', 'read-only']);
+assert.deepStrictEqual(terminalArgs('claude', ['--permission-mode', 'auto'], '-x', 'id', false), ['--permission-mode', 'auto', '--session-id', 'id', '--', '-x']);
+assert.deepStrictEqual(terminalArgs('claude', [], 'x', 'id', true), ['--resume', 'id', '--', 'x']);
+assert.deepStrictEqual(terminalArgs('codex', ['exec', '-m', 'gpt-5-codex'], 'x', 'id', false), ['-m', 'gpt-5-codex', '--', 'x'], 'interactive codex, without exec');
 
 // Events shaped like claude's stream-json output: only text, tool calls, denials and errors are shown.
 const root = '/code/app';

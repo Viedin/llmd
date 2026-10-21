@@ -1,7 +1,8 @@
 import { ChildProcess, execFile, spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { AGENTS, AgentId, agentArgs, Part, render, startedIn, stepPrompt } from './agent';
+import { AGENTS, AgentId, agentArgs, Part, render, startedIn, stepPrompt, terminalArgs } from './agent';
 import { freshSpans, missing, onDidChangeCode, typeSpansOf, whereNames } from './code';
 import { openSteps, questionsOf, stepSection } from './outline';
 import { projectOf } from './refs';
@@ -64,9 +65,23 @@ export interface Run {
   drafting?: boolean; // the agent is writing the commit message
   committed?: string; // "<hash> <subject>" once the step's changes are committed
   child?: ChildProcess;
+  pty?: Pty; // the agent's CLI, when the step runs in a terminal
+  screen?: string; // what it wrote, for the tab to draw again
+  size?: [number, number]; // the terminal's columns and rows in the tab
   stopped?: boolean;
   panel?: vscode.WebviewPanel;
 }
+
+// A process in a terminal of its own, from node-pty.
+interface Pty {
+  onData(listener: (data: string) => void): void;
+  onExit(listener: (e: { exitCode: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+}
+
+const terminalMode = () => vscode.workspace.getConfiguration('llmd').get('runIn') === 'terminal';
 
 export const runs = new Map<string, Run>(); // "<spec uri>#<step>" → its run
 let state: vscode.Memento; // per step: its session with each agent and its run (messages and the step as it was)
@@ -189,6 +204,8 @@ async function post(run: Run) {
     done: !!run.done,
     mode: run.mode,
     working: !!run.child,
+    terminal: terminalMode(),
+    live: !!run.pty, // its terminal is open: you talk to the agent there, and can still pick answers and click Done
     agent: agent().name,
     drafting: !!run.drafting,
     committed: run.committed,
@@ -316,22 +333,37 @@ function show(run: Run, panel: vscode.WebviewPanel) {
   // Code in the run is colored like code in the markdown preview, by its renderer and with its stylesheet.
   const markdown = vscode.extensions.getExtension('vscode.markdown-language-features')?.extensionUri;
   const hljs = markdown && vscode.Uri.joinPath(markdown, 'media');
-  panel.webview.options = { enableScripts: true, localResourceRoots: hljs ? [media, hljs] : [media] };
+  // A step run in a terminal is drawn by xterm.js, from the extension's node_modules.
+  const xterm = vscode.Uri.joinPath(media, '..', 'node_modules', '@xterm');
+  panel.webview.options = { enableScripts: true, localResourceRoots: hljs ? [media, xterm, hljs] : [media, xterm] };
   const nonce = [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
   // The nonce in the address too: the webview caches by it, and an update installs over the same version's files.
   const asset = (name: string) => `${panel.webview.asWebviewUri(vscode.Uri.joinPath(media, name))}?${nonce}`;
-  const csp = `default-src 'none'; style-src ${panel.webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${panel.webview.cspSource} https: data:;`;
+  const lib = (file: string) => panel.webview.asWebviewUri(vscode.Uri.joinPath(xterm, file));
+  // Inline styles for xterm.js, which sizes the terminal with <style> elements of its own.
+  const csp = `default-src 'none'; style-src ${panel.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${panel.webview.cspSource} https: data:;`;
   panel.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">${hljs ? `<link rel="stylesheet" href="${panel.webview.asWebviewUri(vscode.Uri.joinPath(hljs, 'highlight.css'))}">` : ''}
-<link rel="stylesheet" href="${asset('run.css')}"></head>
+<link rel="stylesheet" href="${lib('xterm/css/xterm.css')}"><link rel="stylesheet" href="${asset('run.css')}"></head>
 <body class="writing"><header id="bar"></header><section id="step"></section>
-<main id="chat"><div id="log"></div><form id="composer"><textarea id="input" rows="1"></textarea><button id="send" type="submit"></button></form></main>
+<main id="chat"><div id="log"></div><div id="term"></div><form id="composer"><textarea id="input" rows="1"></textarea><button id="send" type="submit"></button></form></main>
 <section id="review"><form id="commit"><textarea id="message" rows="3" placeholder="Commit message"></textarea><div class="actions">
 <button type="button" data-act="write">✨ Write with Claude</button><span class="grow"></span><button class="primary" id="commitButton" type="submit">Commit</button></div></form>
 <p id="committed"></p><div id="landed"></div></section>
+<script nonce="${nonce}" src="${lib('xterm/lib/xterm.js')}"></script><script nonce="${nonce}" src="${lib('addon-fit/lib/addon-fit.js')}"></script>
 <script nonce="${nonce}" src="${asset('tokens.js')}"></script><script nonce="${nonce}" src="${asset('run.js')}"></script></body></html>`;
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === 'log') return log.info(`${run.step}: ${m.text}`);
+    // The step's terminal: everything it wrote for a tab that draws it now, then your keys and its size.
+    if (m.type === 'attach') {
+      return panel.webview.postMessage({ type: 'pty', full: true,
+        data: run.screen ?? `\x1b[90mClick ▶ Implement or Plan to start ${agent().name} on this step, here.\x1b[0m\r\n` });
+    }
+    if (m.type === 'input') return run.pty?.write(m.data);
+    if (m.type === 'resize') {
+      run.size = [m.cols, m.rows];
+      return run.pty?.resize(m.cols, m.rows);
+    }
     if (m.type === 'ready') postTheme(run);
     if (m.type === 'ready' || m.type === 'refresh') return updateDiffs(run).then(() => post(run));
     if (m.type === 'allow') {
@@ -361,7 +393,11 @@ function show(run: Run, panel: vscode.WebviewPanel) {
       return section && vscode.commands.executeCommand('llmd.decide', run.spec, section.line + m.line, m.answer);
     }
   });
-  panel.onDidDispose(() => (run.panel = undefined));
+  // The step's terminal is in its tab, so closing the tab ends the agent's CLI. A headless run goes on.
+  panel.onDidDispose(() => {
+    run.panel = undefined;
+    if (run.pty) stop(run);
+  });
 }
 
 // The step's changes in VS Code's own diff editor: one file, or all of them in its multi-file one. The old side is the
@@ -481,18 +517,81 @@ export async function runStep(mode: 'implement' | 'plan', spec: vscode.Uri, step
   // doesn't hold the run up.
   const lines = stepSection((await specText(spec)) ?? '', step)?.lines ?? [];
   const where = await Promise.race([whereNames(rootOf(spec), lines), new Promise<string>((r) => setTimeout(() => r(''), 3000))]);
+  // You mark the step done yourself, in the run, so the agent stops at the tick.
+  const leave = mode === 'implement' ? ". When it's built, tick it but leave it in the spec: I review it and mark it done." : '';
+  const prompt = stepPrompt(mode, step, specPath(spec)) + leave + (where && '\n\n' + where);
+  if (vscode.workspace.getConfiguration('llmd').get('runIn') === 'terminal') return inTerminal(mode, spec, step, prompt);
   const run = openRun(spec, step);
   restart(run);
   run.mode = mode;
-  // You mark the step done yourself, in the run, so the agent stops at the tick.
-  const leave = mode === 'implement' ? ". When it's built, tick it but leave it in the spec: I review it and mark it done." : '';
-  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, stepPrompt(mode, step, specPath(spec)) + leave + (where && '\n\n' + where));
+  return ask(run, `${mode === 'plan' ? 'Plan' : 'Implement'} "${step}"`, prompt);
+}
+
+// VS Code's own node-pty, the one its terminal runs on: the agent's CLI needs a real terminal, and a native module of
+// LLMD's own would need a build for every platform. Its code is in VS Code's asar, which Electron reads, unless a build
+// has none.
+// ponytail: an internal of VS Code's; if it moves, bundle node-pty with a build per platform
+function nodePty(): { spawn(file: string, args: string[], options: object): Pty } | undefined {
+  for (const dir of ['node_modules.asar', 'node_modules']) {
+    try {
+      return require(path.join(vscode.env.appRoot, dir, 'node-pty'));
+    } catch (e) {
+      log.warn(`node-pty from ${dir}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+}
+
+// The step's run with the agent's own CLI in the conversation's place, when LLMD's settings say so: a real terminal,
+// drawn by xterm.js in the run. You talk to the agent there, and pick a ?'s answers in the step on the left. Claude goes
+// on in the step's session, so the step's chat and its terminal are one conversation.
+// ponytail: Codex starts a new session each time; its CLI can't be told the id to start under
+async function inTerminal(mode: 'implement' | 'plan', spec: vscode.Uri, step: string, prompt: string) {
+  const run = openRun(spec, step);
+  if (run.pty) return; // it's open: go on in it
+  const pty = nodePty();
+  // Not awaited: the message's promise only settles once you close it.
+  if (!pty) return void vscode.window.showErrorMessage("Couldn't load VS Code's terminal, so the step can't run in one. Set Run In to LLMD's chat in LLMD's settings.");
+  restart(run);
+  run.mode = mode;
+  const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === spec.toString());
+  if (doc?.isDirty) await doc.save();
+  // What the step's changes count from, as in the chat.
+  if (!run.before) run.before = stepSection((await specText(spec)) ?? '', step)?.lines;
+  if (!run.base) run.base = await snapshot(rootOf(spec).fsPath);
+  save(run);
+
+  const { id, name, program, flags } = agent();
+  const sessionAt = sessionKey(id, runKey(spec, step));
+  const session = state.get<string>(sessionAt);
+  const fresh = session ?? randomUUID();
+  if (id === 'claude' && !session) state.update(sessionAt, fresh);
+  const [cols, rows] = run.size ?? [80, 24];
+  const child = pty.spawn(program, terminalArgs(id, flags, prompt, fresh, !!session), { name: 'xterm-256color', cols, rows, cwd: rootOf(spec).fsPath, env: process.env });
+  run.pty = child;
+  run.stopped = false;
+  run.screen = '';
+  run.panel?.webview.postMessage({ type: 'pty', full: true, data: '' });
+  child.onData((data) => {
+    run.screen = (run.screen + data).slice(-(1 << 20)); // ponytail: the last MB, for a tab that draws it again
+    run.panel?.webview.postMessage({ type: 'pty', data });
+  });
+  child.onExit(({ exitCode }) => {
+    run.pty = undefined;
+    // Claude ends with an error when it can't resume the session, like one it has cleaned up: the next start is a fresh one.
+    if (id === 'claude' && exitCode && !run.stopped) state.update(sessionAt, undefined);
+    const note = `\r\n\x1b[90m${name} exited${exitCode ? ` with code ${exitCode}` : ''}.\x1b[0m\r\n`;
+    run.screen += note;
+    run.panel?.webview.postMessage({ type: 'pty', data: note });
+    updateDiffs(run).then(() => post(run));
+  });
+  await post(run);
 }
 
 function stop(run: Run) {
-  if (!run.child) return;
+  if (!run.child && !run.pty) return;
   run.stopped = true;
-  run.child.kill();
+  run.child?.kill();
+  run.pty?.kill();
 }
 
 // One message of the step's chat: a headless run of the agent at the project root, its answer streamed into the run.
@@ -647,9 +746,11 @@ export async function done(run: Run) {
     await vscode.window.tabGroups.close(tabs);
     await vscode.workspace.fs.delete(run.spec);
   }
+  stop(run); // the step's terminal, if it's open: the run is history now
   run.done = true;
   run.last = section.lines;
   save(run);
+  await updateDiffs(run); // what the agent changed in its terminal, which no message of the chat read in
   await post(run);
 }
 

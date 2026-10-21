@@ -40,6 +40,13 @@ export function agentArgs(agent: AgentId, prompt: string, session?: string, read
   return { args: ['-p', '--output-format', 'stream-json', '--verbose', ...tools, ...(session ? ['--resume', session] : []), '--', prompt], input: '' };
 }
 
+// The agent's own interactive CLI on a step, for a run in a terminal: what goes after its program. Claude starts the
+// step's session under that id, or goes on with it when `resume`. Codex's interactive CLI is `codex` without `exec`.
+export function terminalArgs(agent: AgentId, flags: string[], prompt: string, session: string, resume: boolean): string[] {
+  if (agent === 'codex') return [...(flags[0] === 'exec' ? flags.slice(1) : flags), '--', prompt];
+  return [...flags, resume ? '--resume' : '--session-id', session, '--', prompt];
+}
+
 // The session an event says the run is in: Claude's when it starts, Codex's thread when it starts. A resume of a missing
 // session never gets one.
 export const startedIn = (event: any): string | undefined =>

@@ -14,3 +14,6 @@ example.llmd
 .github/**
 docs/**
 images/icon.svg
+node_modules/@xterm/*/src/**
+node_modules/@xterm/*/typings/**
+node_modules/@xterm/**/*.mjs

@@ -47,6 +47,7 @@ export async function run() {
   await checkCode();
   await checkRun();
   await checkCodex();
+  await checkTerminal();
   console.log('e2e ok');
 }
 
@@ -676,5 +677,54 @@ async function checkCodex() {
   } finally {
     await settings.update('agent', undefined, vscode.ConfigurationTarget.Global);
     await settings.update('codexCommand', undefined, vscode.ConfigurationTarget.Global);
+  }
+}
+
+// Run In: Terminal. Implement runs the agent's own CLI in a real terminal in the run's tab, where the conversation was,
+// in the step's Claude session, and goes on in it next time. A session Claude can't resume makes the next start a fresh one.
+async function checkTerminal() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-'));
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-agent-'));
+  const log = path.join(tools, 'calls.log');
+  const agent = path.join(tools, 'claude.js');
+  fs.writeFileSync(agent, `
+    const args = process.argv.slice(2);
+    require('fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+    process.stdout.write('tty:' + process.stdout.isTTY + '\\r\\n');
+    setTimeout(() => process.exit(args.includes('--resume') ? 1 : 0), 1000);
+  `);
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]) : []);
+  const settings = vscode.workspace.getConfiguration('llmd');
+  await settings.update('runIn', 'terminal', vscode.ConfigurationTarget.Global);
+  await settings.update('claudeCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  try {
+    const file = path.join(dir, '.llmd', 'term.llmd');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '## Log\n@main.go\n  - main()\n');
+    const uri = vscode.Uri.file(file);
+    await vscode.window.showTextDocument(uri);
+    const implement = async (n: number) => {
+      await vscode.commands.executeCommand('llmd.implement', uri, 'Log');
+      const run = runs.get(runKey(uri, 'Log'))!;
+      assert.ok(run.panel && run.pty, 'the CLI runs in the run\'s tab');
+      for (let i = 0; i < 100 && (calls().length < n || run.pty); i++) await sleep(100);
+      assert.ok(!run.pty, 'the fake agent exits');
+      return { run, args: calls()[n - 1] };
+    };
+    const first = await implement(1);
+    assert.ok(first.run.size, 'xterm.js draws it in the tab, and says its size');
+    assert.ok(first.run.screen?.includes('tty:true') && first.run.screen.includes('Claude exited.'), `in a real terminal: ${first.run.screen}`);
+    assert.strictEqual(vscode.window.terminals.length, 0, 'no terminal of its own');
+    const [flag, session, dashes, prompt] = first.args;
+    assert.deepStrictEqual([flag, dashes], ['--session-id', '--'], `Claude starts the step's session: ${first.args}`);
+    assert.ok(prompt.startsWith('implement the step "Log" in .llmd/term.llmd'), prompt);
+    const second = await implement(2);
+    assert.deepStrictEqual(second.args.slice(0, 2), ['--resume', session], 'and goes on in it');
+    const third = await implement(3);
+    assert.ok(third.args[0] === '--session-id' && third.args[1] !== session, "a session it can't resume starts fresh");
+    third.run.panel?.dispose();
+  } finally {
+    await settings.update('runIn', undefined, vscode.ConfigurationTarget.Global);
+    await settings.update('claudeCommand', undefined, vscode.ConfigurationTarget.Global);
   }
 }

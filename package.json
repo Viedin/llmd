@@ -73,6 +73,15 @@
           "default": "codex exec",
           "order": 2,
           "markdownDescription": "The Codex command, when **Agent** is Codex. LLMD runs it at the project root with `--json`, gives it the prompt on stdin and resumes the step's session. It sets the sandbox itself: `workspace-write` for a step's run, so Codex edits the project and runs commands in it, and `read-only` when it writes answers or a commit message. Add your own flags after `exec`, like `-m gpt-5-codex`, or `-c sandbox_workspace_write.network_access=true` to let its commands reach the network."
+        },
+        "llmd.runIn": {
+          "type": "string",
+          "enum": ["chat", "terminal"],
+          "enumItemLabels": ["LLMD's chat", "Terminal"],
+          "enumDescriptions": ["The conversation, with the agent run headless.", "The agent's own CLI, in a terminal where the conversation would be. You talk to it there."],
+          "default": "chat",
+          "order": 3,
+          "markdownDescription": "What a step's run has on the right, next to the step, when you click **Implement** or **Plan**. **Terminal** runs the agent's command there without `-p` (Codex's without `exec`), so it asks for permission as it would in your own terminal, and you pick a `?`'s answers in the step while it waits. Claude Code goes on in the step's session, so the conversation and the terminal are one chat; Codex starts a new session each time. **Done**, and the step's review and commit, work the same either way."
         }
       }
     },
@@ -122,6 +131,10 @@
     "vscode:prepublish": "npm run compile",
     "test": "npm run compile && node out/test.js",
     "test:e2e": "npm run compile && node out/runE2E.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
