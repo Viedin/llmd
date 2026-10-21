@@ -26,8 +26,15 @@ lang: csharp
 
 LLMD has two parts:
 
-- **A VS Code extension** that makes `.llmd` a real language that knows your code: highlighting, `@` file completion, an outline, warnings for broken references, and, under a file, its real types and methods to complete, their hovers and Ctrl+click into the code. What a step adds is green. Right-click a method in your code and **Add to step** puts it in the plan. **▶ Implement** / **Plan** above each step turns the editor into the step's run: the step stays live on one side while the agent builds it, and you talk to it on the other.
+- **A VS Code extension** that makes `.llmd` a real language that knows your code:
+  - highlighting, `@` file completion, an outline and warnings for broken references;
+  - under a file, its real types and methods to complete, with their hovers and Ctrl+click into the code, and after a `:`, any type your project has. What a step adds is green;
+  - **Add to step** on a method in your code puts it in the plan;
+  - a `?`'s answers to click, or **✨ Ask Claude** / **Ask Codex** to write them, so you decide while you sketch;
+  - **▶ Implement** / **Plan** above each step, which turn the editor into the step's run: the step stays live on one side while the agent builds it, and you talk to it on the other. Then you review the changes, mark it **Done** and commit.
 - **An agent skill** that teaches Claude Code, Codex and other agents what the syntax means and how to implement a step.
+
+The runs use **Claude Code** or **Codex**, whichever you pick in the extension's settings.
 
 **→ Read the [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md)** for the full syntax and workflow.
 
@@ -55,22 +62,39 @@ In Claude Code:
 /plugin install llmd@llmd
 ```
 
-For Codex and other agents:
+In Codex:
+
+```bash
+codex plugin marketplace add viedin/llmd
+codex plugin add llmd@llmd
+```
+
+For other agents:
 
 ```bash
 npx skills add viedin/llmd
 ```
 
-The skill comes straight from the repo, so there's nothing to build. New sessions list `llmd` among their skills (in Codex, `/skills` shows it).
+The skill comes straight from the repo, so there's nothing to build. New sessions list `llmd` among their skills (in Codex, `/skills` shows it). Install it one way per agent: with two, the agent lists `llmd` twice.
+
+### The agent
+
+**▶ Implement**, **Plan** and the step's run start the agent's CLI in the background, so install one and sign in:
+
+- [Claude Code](https://code.claude.com/docs), the `claude` command. It's the default.
+- [Codex](https://learn.chatgpt.com/docs/codex/cli), the `codex` command. To use it, run **LLMD: Settings** from the Command Palette and set **Agent** to Codex.
+
+LLMD: Settings also holds the command each agent starts, for your own flags, like a model. The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md#the-agent) says what each runs with and what it may do.
 
 ## Quick start
 
-1. Open your project **folder** in VS Code.
+1. Open your project **folder** in VS Code. To use Codex, set it as the agent in **LLMD: Settings**.
 2. Run **LLMD: New feature** and write its `## step`, or create `.llmd/app.llmd` with a title, a `lang:` line and a first `## step`.
-3. Click **▶ Implement** above the step, or tell your agent `implement the next step`.
-4. Answer its questions, review the diff, and once it has ticked the step and the code has what it lists, mark it **✓ Done**.
+3. Not sure about something? Write it as a `? question` and pick an answer, or click **Plan** and the agent writes the questions for you.
+4. Click **▶ Implement** above the step, or tell your agent `implement the next step`.
+5. Answer its questions, review the changes, and once it has ticked the step and the code has what it lists, mark it **✓ Done** and commit.
 
-The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md) covers each of these in depth: [starting a project](https://github.com/Viedin/llmd/blob/main/docs/guide.md#1-start-a-project), [every line type](https://github.com/Viedin/llmd/blob/main/docs/guide.md#line-types), [handing decisions to the agent](https://github.com/Viedin/llmd/blob/main/docs/guide.md#hand-decisions-to-the-agent), [reviewing a step](https://github.com/Viedin/llmd/blob/main/docs/guide.md#review) and [runs](https://github.com/Viedin/llmd/blob/main/docs/guide.md#runs).
+The [guide](https://github.com/Viedin/llmd/blob/main/docs/guide.md) covers each of these in depth: [starting a project](https://github.com/Viedin/llmd/blob/main/docs/guide.md#1-start-a-project), [every line type](https://github.com/Viedin/llmd/blob/main/docs/guide.md#line-types), [handing decisions to the agent](https://github.com/Viedin/llmd/blob/main/docs/guide.md#hand-decisions-to-the-agent), [the editor's help while you write](https://github.com/Viedin/llmd/blob/main/docs/guide.md#editor-help-while-you-write), [runs](https://github.com/Viedin/llmd/blob/main/docs/guide.md#runs), [the agent](https://github.com/Viedin/llmd/blob/main/docs/guide.md#the-agent) and [reviewing a step](https://github.com/Viedin/llmd/blob/main/docs/guide.md#review).
 
 ## Contributing
 
@@ -84,7 +108,7 @@ npx @vscode/vsce package --out llmd.vsix
 code --install-extension llmd.vsix --force
 ```
 
-Link the skill to your checkout, so edits apply straight away:
+Link the skill to your checkout, so edits apply straight away. Remove the plugin first if you installed it, or the agent lists `llmd` twice:
 
 ```bash
 ln -sfn "$PWD/skills/llmd" ~/.claude/skills/llmd
@@ -92,7 +116,7 @@ ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd
 ```
 
 - `npm test` checks the parsers (paths, outline, symbols).
-- `npm run test:e2e` starts a separate copy of VS Code and checks completion, warnings, colors, Enter, dimming, the outline, Ctrl+click, what the plan knows about the code, and a step's run. The first run downloads that copy into `.vscode-test/`.
+- `npm run test:e2e` starts a separate copy of VS Code and checks completion, warnings, colors, Enter, dimming, the outline, Ctrl+click, what the plan knows about the code, and a step's run with a stand-in Claude and Codex. The first run downloads that copy into `.vscode-test/`.
 - **F5** opens a debug window running your current code. Open `.llmd` files there with **File → Open File**.
 
 ### Releasing
@@ -106,7 +130,7 @@ ln -sfn "$PWD/skills/llmd" ~/.codex/skills/llmd
 3. The Release workflow checks the tag matches `package.json`, then builds `llmd.vsix` with `vsce package` and attaches it to a GitHub release. `.vscodeignore` decides what goes in it.
 4. Upload the same `llmd.vsix` to the VS Code Marketplace by hand: download it from the release, then on the [publisher page](https://marketplace.visualstudio.com/manage/publishers/viedin) use **Update** (the first time, **New extension → Visual Studio Code**).
 
-The skill needs no build: Claude Code and `npx skills` read `skills/llmd/` from `main`.
+The skill needs no build: Claude Code, Codex and `npx skills` read `skills/llmd/` from `main`.
 
 ## License
 
