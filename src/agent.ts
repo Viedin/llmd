@@ -20,11 +20,30 @@ export function answersPrompt(file: string, step: string[], question: string): s
 // The answers in the agent's reply to answersPrompt: its "- " lines.
 export const answersIn = (reply: string) => [...reply.matchAll(/^\s*[-*]\s+(.*\S)/gm)].map((m) => m[1].replace(/\*\*/g, ''));
 
-// One headless claude run, streamed back as JSON lines, continuing the step's session when it has one.
-// The prompt goes last, after "--", so a prompt starting with "-" isn't read as a flag.
-export function agentArgs(prompt: string, session?: string): string[] {
-  return ['-p', '--output-format', 'stream-json', '--verbose', ...(session ? ['--resume', session] : []), '--', prompt];
+export type AgentId = 'claude' | 'codex';
+
+// The agents a run can use, picked in the settings, and the command each starts unless you set your own.
+export const AGENTS: Record<AgentId, { name: string; command: string }> = {
+  claude: { name: 'Claude', command: 'claude --permission-mode auto' },
+  codex: { name: 'Codex', command: 'codex exec' },
+};
+
+// One headless run, streamed back as JSON lines, continuing the step's session when it has one, and only reading when
+// `readOnly`: what goes after the command, and what goes to its stdin. Claude takes the prompt last, after "--", so a
+// prompt starting with "-" isn't read as a flag. Codex reads it from stdin, and works in its sandbox.
+export function agentArgs(agent: AgentId, prompt: string, session?: string, readOnly = false): { args: string[]; input: string } {
+  if (agent === 'codex') {
+    const sandbox = ['--sandbox', readOnly ? 'read-only' : 'workspace-write'];
+    return { args: ['--json', '--skip-git-repo-check', ...sandbox, ...(session ? ['resume', session] : [])], input: prompt };
+  }
+  const tools = readOnly ? ['--disallowedTools', 'Edit Write MultiEdit NotebookEdit Bash'] : [];
+  return { args: ['-p', '--output-format', 'stream-json', '--verbose', ...tools, ...(session ? ['--resume', session] : []), '--', prompt], input: '' };
 }
+
+// The session an event says the run is in: Claude's when it starts, Codex's thread when it starts. A resume of a missing
+// session never gets one.
+export const startedIn = (event: any): string | undefined =>
+  event?.type === 'system' && event.subtype === 'init' ? event.session_id : event?.type === 'thread.started' ? event.thread_id : undefined;
 
 export interface Part {
   kind: 'text' | 'tool' | 'error';
@@ -35,9 +54,10 @@ export interface Part {
 
 const EDITS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
-// What one event of claude's stream-json output adds to the chat: the agent's text (markdown), a line per tool call,
-// and at the end what it wasn't allowed to do. Thinking, hooks and tool results add nothing.
+// What one event of the agent's JSON output adds to the chat: its text (markdown), a line per tool call, and Claude's
+// last says what it wasn't allowed to do. Thinking, hooks and tool results add nothing.
 export function render(event: any, root: string): Part[] {
+  if (/^(item|turn)\.|^error$/.test(event?.type)) return codex(event, root);
   if (event?.type === 'assistant') {
     return (event.message?.content ?? []).flatMap((b: any): Part[] =>
       b.type === 'text' && b.text ? [{ kind: 'text', text: b.text }]
@@ -52,6 +72,32 @@ export function render(event: any, root: string): Part[] {
   }
   return [];
 }
+
+// An event of `codex exec --json`: a line per command it starts and file it changes, as Claude's tool calls read.
+function codex(event: any, root: string): Part[] {
+  const item = event.item ?? {};
+  if (event.type === 'item.started') {
+    if (item.type === 'command_execution') return [{ kind: 'tool', text: tool('Bash', { command: shell(item.command) }, root) }];
+    if (item.type === 'mcp_tool_call') return [{ kind: 'tool', text: `${item.server} ${item.tool}` }];
+  }
+  if (event.type === 'item.completed') {
+    if (item.type === 'agent_message' && item.text) return [{ kind: 'text', text: item.text }];
+    if (item.type === 'web_search') return [{ kind: 'tool', text: tool('WebSearch', { pattern: item.query }, root) }];
+    if (item.type === 'error') return [{ kind: 'error', text: item.message }];
+    if (item.type === 'file_change') return (item.changes ?? []).map((c: any): Part => {
+      const file = path.resolve(root, c.path);
+      return { kind: 'tool', text: tool(c.kind === 'add' ? 'Write' : c.kind === 'delete' ? 'Delete' : 'Edit', { file_path: file }, root), file };
+    });
+  }
+  if (event.type === 'turn.failed' || event.type === 'error') return [{ kind: 'error', text: event.error?.message ?? event.message }];
+  return [];
+}
+
+// The command inside Codex's shell wrapper: "go test ./..." for "bash -lc 'go test ./...'".
+const shell = (command: unknown) => {
+  const line = Array.isArray(command) ? command.join(' ') : String(command ?? '');
+  return line.match(/^(?:\S*\/)?(?:ba|z)?sh -lc (['"])([\s\S]*)\1$/)?.[2] ?? line;
+};
 
 // "Edit cmd/main.go", "Bash go build ./...": the tool and what it works on, files relative to the project.
 function tool(name: string, input: any, root: string): string {

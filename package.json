@@ -46,16 +46,33 @@
       { "command": "llmd.done", "title": "LLMD: Done with step" },
       { "command": "llmd.addToStep", "title": "LLMD: Add to step" },
       { "command": "llmd.decide", "title": "LLMD: Answer question" },
-      { "command": "llmd.suggest", "title": "LLMD: Ask Claude for answers" },
+      { "command": "llmd.suggest", "title": "LLMD: Ask the agent for answers" },
+      { "command": "llmd.settings", "title": "LLMD: Settings" },
       { "command": "llmd.answer", "title": "LLMD: Answer the question here" }
     ],
     "configuration": {
       "title": "LLMD",
       "properties": {
-        "llmd.agentCommand": {
+        "llmd.agent": {
+          "type": "string",
+          "enum": ["claude", "codex"],
+          "enumItemLabels": ["Claude Code", "Codex"],
+          "enumDescriptions": ["Anthropic's `claude` CLI, started by **Claude Command**.", "OpenAI's `codex` CLI, started by **Codex Command**."],
+          "default": "claude",
+          "order": 0,
+          "markdownDescription": "The agent that builds a step when you click **Implement**, plans it with **Plan**, answers in the step's run, writes answers to a `?` and writes commit messages. Install its CLI and the `llmd` skill for it. A step's chat with one agent doesn't carry over to the other."
+        },
+        "llmd.claudeCommand": {
           "type": "string",
           "default": "claude --permission-mode auto",
-          "markdownDescription": "The Claude Code command that runs a step when you click **Implement** or **Plan**, and answers in the step's run. LLMD runs it headless (`-p`) at the project root and adds the prompt and the session. The permission mode decides what Claude may do without asking: `auto` lets it run what's safe, like builds and tests. Anything it can't do shows as **Not allowed** in the run, with **Allow** to add it to the project's `.claude/settings.local.json`. Use `--permission-mode acceptEdits` if `auto` isn't available on your plan."
+          "order": 1,
+          "markdownDescription": "The Claude Code command, when **Agent** is Claude Code. LLMD runs it headless (`-p`) at the project root and adds the prompt and the session. The permission mode decides what Claude may do without asking: `auto` lets it run what's safe, like builds and tests. Anything it can't do shows as **Not allowed** in the run, with **Allow** to add it to the project's `.claude/settings.local.json`. Use `--permission-mode acceptEdits` if `auto` isn't available on your plan."
+        },
+        "llmd.codexCommand": {
+          "type": "string",
+          "default": "codex exec",
+          "order": 2,
+          "markdownDescription": "The Codex command, when **Agent** is Codex. LLMD runs it at the project root with `--json`, gives it the prompt on stdin and resumes the step's session. It sets the sandbox itself: `workspace-write` for a step's run, so Codex edits the project and runs commands in it, and `read-only` when it writes answers or a commit message. Add your own flags after `exec`, like `-m gpt-5-codex`, or `-c sandbox_workspace_write.network_access=true` to let its commands reach the network."
         }
       }
     },
@@ -69,7 +86,7 @@
         { "command": "llmd.decide", "when": "false" },
         { "command": "llmd.suggest", "when": "false" },
         { "command": "llmd.answer", "when": "editorLangId == llmd && llmd.onQuestion" },
-        { "command": "llmd.addToStep", "when": "resourceScheme == file && editorLangId != llmd" }
+        { "command": "llmd.addToStep", "when": "false" }
       ],
       "editor/context": [
         { "command": "llmd.addToStep", "when": "resourceScheme == file && editorLangId != llmd", "group": "llmd" }

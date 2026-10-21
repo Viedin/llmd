@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { missing, whereNames } from './code';
 import { doneLines, newRanges } from './extension';
-import { allow, commit, hasRun, nextSteps, openChanges, runKey, runs, send, themeFile, writeMessage } from './run';
+import { allow, askOnce, commit, hasRun, nextSteps, openChanges, runKey, runs, send, themeFile, why, writeMessage } from './run';
 import { themeCss, TOKENS } from './theme';
 import { execFileSync } from 'child_process';
 
@@ -46,6 +46,7 @@ export async function run() {
   await checkSymbols();
   await checkCode();
   await checkRun();
+  await checkCodex();
   console.log('e2e ok');
 }
 
@@ -188,7 +189,7 @@ async function checkAskClaude() {
     console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'Two ways:\\n- slog — structured (recommended)\\n- fmt — simplest' }));
   `);
   const settings = vscode.workspace.getConfiguration('llmd');
-  await settings.update('agentCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  await settings.update('claudeCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
   try {
     const { doc } = await openTemp('suggest.llmd', '## Log\n@main.go\n  - main()\n    - ? slog or fmt\n    - done');
     const lens = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri)).filter((l) => l.range.start.line === 3);
@@ -199,7 +200,7 @@ async function checkAskClaude() {
     const args: string[] = JSON.parse(fs.readFileSync(log, 'utf8'));
     assert.ok(args.includes('--disallowedTools') && args.at(-1)!.includes('this step asks "slog or fmt"'), `Claude reads, and changes nothing: ${args}`);
   } finally {
-    await settings.update('agentCommand', undefined, vscode.ConfigurationTarget.Global);
+    await settings.update('claudeCommand', undefined, vscode.ConfigurationTarget.Global);
   }
 }
 
@@ -480,7 +481,7 @@ async function checkRun() {
     ]) console.log(JSON.stringify(e));
   `);
   const settings = vscode.workspace.getConfiguration('llmd');
-  await settings.update('agentCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  await settings.update('claudeCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
   try {
     fs.writeFileSync(file, 'lang: typescript\n\n## Build it\n@a.ts\n? which one\n\n## Later\n');
     // A repository with a.ts committed, so the run's changes come from git.
@@ -601,6 +602,79 @@ async function checkRun() {
     const shownOnce = git('show', '--name-only', '--format=%s', 'HEAD').toString().trim().split('\n');
     assert.ok(shownOnce[0] === 'Once' && shownOnce.includes('a.ts') && !shownOnce.includes('.llmd/once.llmd'), shownOnce.join(', '));
   } finally {
-    await settings.update('agentCommand', undefined, vscode.ConfigurationTarget.Global);
+    await settings.update('claudeCommand', undefined, vscode.ConfigurationTarget.Global);
+  }
+}
+
+// With Codex picked in the settings, a fake codex stands in for it: it logs its arguments and the prompt it reads from
+// stdin, and prints a recorded `codex exec --json` run.
+async function checkCodex() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-'));
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-agent-'));
+  const log = path.join(tools, 'calls.log');
+  const agent = path.join(tools, 'codex.js');
+  fs.writeFileSync(agent, `
+    const fs = require('fs');
+    const prompt = fs.readFileSync(0, 'utf8');
+    fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), prompt }) + '\\n');
+    if (prompt === 'fail') {
+      console.log(JSON.stringify({ type: 'thread.started', thread_id: 't2' }));
+      console.log(JSON.stringify({ type: 'turn.failed', error: { message: 'Selected model is at capacity' } }));
+      process.exit(1);
+    }
+    const message = prompt.includes('this step asks') ? '- slog — structured (recommended)\\n- fmt — simplest' : 'Built **it**.';
+    for (const e of [
+      { type: 'thread.started', thread_id: 't1' },
+      { type: 'item.started', item: { id: 'i1', type: 'command_execution', command: "bash -lc 'go build ./...'", status: 'in_progress' } },
+      { type: 'item.completed', item: { id: 'i2', type: 'file_change', changes: [{ path: ${JSON.stringify(path.join(dir, 'a.go'))}, kind: 'update' }], status: 'completed' } },
+      { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: message } },
+      { type: 'turn.completed', usage: {} },
+    ]) console.log(JSON.stringify(e));
+  `);
+  const calls = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { args: string[]; prompt: string });
+  const settings = vscode.workspace.getConfiguration('llmd');
+  await settings.update('agent', 'codex', vscode.ConfigurationTarget.Global);
+  await settings.update('codexCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  try {
+    const file = path.join(dir, '.llmd', 'codex.llmd');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '## Log\n@main.go\n  - main()\n    - ? slog or fmt\n');
+    const uri = vscode.Uri.file(file);
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const lens = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri)).filter((l) => l.range.start.line === 3);
+    assert.deepStrictEqual(lens.map((l) => l.command?.title), ['$(sparkle) Ask Codex'], 'the lens names the agent picked');
+    await vscode.commands.executeCommand('llmd.suggest', uri, 3);
+    assert.strictEqual(doc.getText(), '## Log\n@main.go\n  - main()\n    - ? slog or fmt\n      - slog — structured (recommended)\n      - fmt — simplest\n');
+    assert.deepStrictEqual(calls()[0].args, ['--json', '--skip-git-repo-check', '--sandbox', 'read-only'], 'Codex answers in a read-only sandbox');
+    assert.ok(calls()[0].prompt.includes('this step asks "slog or fmt"'), 'the prompt goes on stdin');
+    await doc.save();
+
+    const key = runKey(uri, 'Log');
+    const finished = async () => {
+      await sleep(100);
+      for (let i = 0; i < 100 && (!runs.get(key) || runs.get(key)!.child); i++) await sleep(100);
+    };
+    await vscode.commands.executeCommand('llmd.implement', uri, 'Log');
+    await finished();
+    const run = runs.get(key)!;
+    const shown = run.messages.map((m) => [m.who, m.parts.map((p) => `${p.kind}: ${p.html.replace(/<p[^>]*>/g, '<p>').trim()}`)]);
+    assert.deepStrictEqual(shown, [
+      ['you', ['text: <p>Implement &quot;Log&quot;</p>']],
+      ['claude', ['tool: Bash go build ./...', 'tool: Edit a.go', 'text: <p>Built <strong>it</strong>.</p>']],
+    ], "Codex's run reads like Claude's");
+    assert.strictEqual(run.messages[1].parts[1].file, path.join(dir, 'a.go'), 'the changed file is kept for Changes');
+    assert.deepStrictEqual(calls()[1].args, ['--json', '--skip-git-repo-check', '--sandbox', 'workspace-write'], 'a run may write in the project');
+    await send(run, 'and now?');
+    await finished();
+    assert.deepStrictEqual(calls()[2].args.slice(-2), ['resume', 't1'], 'the next message resumes the thread');
+    assert.ok(calls()[2].prompt.startsWith('and now?'), calls()[2].prompt);
+    // A failed one-off question says why.
+    const failed = await askOnce(vscode.Uri.file(dir), 'fail', true);
+    assert.deepStrictEqual(failed, { error: 'Selected model is at capacity' });
+    assert.strictEqual(`It failed${why(failed.error)}`, 'It failed: Selected model is at capacity.');
+  } finally {
+    await settings.update('agent', undefined, vscode.ConfigurationTarget.Global);
+    await settings.update('codexCommand', undefined, vscode.ConfigurationTarget.Global);
   }
 }

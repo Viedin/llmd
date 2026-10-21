@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { CALLABLE, codeHover, CodeSymbol, CONTAINERS, freshSpans, missing, onDidChangeCode, searchTypes, symbolOf, symbolsOf, typeNamed, TYPES, typeSpansOf, watchCode } from './code';
 import { OutlineNode, openSteps, parseOutline, placeIn, questionAt, questionsOf, Segment, stepSection } from './outline';
 import { answersIn, answersPrompt } from './agent';
-import { askOnce, done, initRuns, nextSteps, openRun, rootOf, runStep, specPath } from './run';
+import { agent, askOnce, done, initRuns, nextSteps, openRun, rootOf, runStep, specPath, why } from './run';
 import { findRefs } from './refs';
 import { builtinTypes, Claim, claims, claimSpan, closest, findCalls, indexSymbols, inPath, inTypePosition, ownerAbove, receiverOf, Span, symbolName, unitsOf } from './symbols';
 
@@ -258,6 +258,8 @@ async function addToStep(uri?: vscode.Uri, picked?: vscode.Uri[]) {
   const { doc } = step;
   const root = rootOf(doc.uri);
   let at = step.line;
+  let added = false;
+  let listed = false; // something it already has
   for (const target of targets) {
     const rel = path.relative(root.fsPath, target.fsPath).split(path.sep).join('/');
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
@@ -272,10 +274,12 @@ async function addToStep(uri?: vscode.Uri, picked?: vscode.Uri[]) {
     if (place.lines.length) {
       const edit = new vscode.WorkspaceEdit();
       edit.insert(doc.uri, doc.lineAt(place.after).range.end, '\n' + place.lines.join('\n'));
-      await vscode.workspace.applyEdit(edit);
-    }
+      if (await vscode.workspace.applyEdit(edit)) added = true;
+    } else listed = true;
     at = place.at;
   }
+  // The step may list it all already: it's shown where it is, which would look like nothing happened.
+  if (listed && !added) vscode.window.showInformationMessage(`"${doc.lineAt(step.line).text.replace(/^##\s+(?:\[[ xX]\]\s*)?/, '')}" already lists it.`);
   const end = doc.lineAt(at).range.end;
   const shown = vscode.window.visibleTextEditors.find((e) => e.document === doc);
   await vscode.window.showTextDocument(doc, { viewColumn: shown?.viewColumn ?? vscode.ViewColumn.Beside, selection: new vscode.Range(end, end) });
@@ -365,10 +369,10 @@ async function decide(uri: vscode.Uri, line: number, answer: string) {
   await vscode.workspace.applyEdit(edit);
 }
 
-const answering = new Set<string>(); // "<spec uri>#<question>" while Claude writes its answers
-const answered = new vscode.EventEmitter<void>(); // Claude started or finished answering one
+const answering = new Set<string>(); // "<spec uri>#<question>" while the agent writes its answers
+const answered = new vscode.EventEmitter<void>(); // the agent started or finished answering one
 
-// Has Claude write the answers to a ? under it, to pick from: it reads the step, and the code the step points to, but
+// Has the agent write the answers to a ? under it, to pick from: it reads the step, and the code the step points to, but
 // changes nothing.
 async function suggest(uri: vscode.Uri, line: number) {
   const doc = await vscode.workspace.openTextDocument(uri);
@@ -381,13 +385,14 @@ async function suggest(uri: vscode.Uri, line: number) {
   const step = heading < 0 ? undefined : stepSection(text, doc.lineAt(heading).text.replace(/^##\s+(?:\[[ xX]\]\s*)?/, '').trim());
   answering.add(key);
   answered.fire();
-  const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Claude is answering' }, () =>
-    askOnce(rootOf(uri), answersPrompt(specPath(uri), step?.lines ?? text.split('\n'), q.question), ['--disallowedTools', 'Edit Write MultiEdit NotebookEdit Bash']));
+  const { name } = agent();
+  const { answer, error } = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `${name} is answering` }, () =>
+    askOnce(rootOf(uri), answersPrompt(specPath(uri), step?.lines ?? text.split('\n'), q.question), true));
   answering.delete(key);
   answered.fire();
-  const answers = answersIn(reply ?? '');
-  if (!answers.length) return void vscode.window.showErrorMessage(`Claude didn't answer "${q.question}". Try again, or write your own.`);
-  // You may have written on while Claude thought: the question is the one by that text nearest to where it was.
+  const answers = answersIn(answer ?? '');
+  if (!answers.length) return void vscode.window.showErrorMessage(`${name} didn't answer "${q.question}"${why(error)} Try again, or write your own.`);
+  // You may have written on while the agent thought: the question is the one by that text nearest to where it was.
   const now = questionsOf(doc.getText()).filter((x) => x.question === q.question).sort((a, b) => Math.abs(a.line - line) - Math.abs(b.line - line))[0];
   if (!now) return;
   const indent = ' '.repeat(doc.lineAt(now.line).firstNonWhitespaceCharacterIndex + 2);
@@ -398,10 +403,10 @@ async function suggest(uri: vscode.Uri, line: number) {
 
 const KEY = process.platform === 'darwin' ? '⌘↵' : 'Ctrl+Enter';
 
-// What ⌘↵ does on the cursor's line, for its hint: pick the answer it's on, ask Claude for answers, or choose one.
+// What ⌘↵ does on the cursor's line, for its hint: pick the answer it's on, ask the agent for answers, or choose one.
 function onQuestion(editor: vscode.TextEditor): string | undefined {
   const at = editor.document.languageId === 'llmd' ? questionAt(editor.document.getText(), editor.selection.active.line) : undefined;
-  return !at ? undefined : at.answer ? 'pick this answer' : at.question.answers.length ? 'choose an answer' : 'ask Claude for answers';
+  return !at ? undefined : at.answer ? 'pick this answer' : at.question.answers.length ? 'choose an answer' : `ask ${agent().name} for answers`;
 }
 
 // ⌘↵ on a question or an answer: the keyboard's way to answer it.
@@ -459,7 +464,8 @@ export function activate(context: vscode.ExtensionContext) {
     const what = onQuestion(editor);
     vscode.commands.executeCommand('setContext', 'llmd.onQuestion', !!what);
     if (editor.document.languageId !== 'llmd') return;
-    const end = editor.document.lineAt(editor.selection.active.line).range.end;
+    // The selection lags behind an edit that made the file shorter, like the agent's on disk.
+    const end = editor.document.lineAt(editor.document.validatePosition(editor.selection.active).line).range.end;
     editor.setDecorations(hint, what ? [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: `${KEY} ${what}` } } }] : []);
   };
   const decorate = async (editor: vscode.TextEditor) => {
@@ -480,7 +486,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (doc.version === version) editor.setDecorations(fresh, ranges); // a newer edit decorates for itself
   };
   vscode.window.visibleTextEditors.forEach(decorate);
-  const lensChanges = new vscode.EventEmitter<void>(); // the code changed under a built step, or Claude is answering a ?
+  const lensChanges = new vscode.EventEmitter<void>(); // the code changed under a built step, the agent is answering a ?, or it's another agent
 
   context.subscriptions.push(
     diagnostics,
@@ -515,6 +521,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('llmd.addToStep', addToStep),
     vscode.commands.registerCommand('llmd.decide', decide),
     vscode.commands.registerCommand('llmd.suggest', suggest),
+    vscode.commands.registerCommand('llmd.settings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:viedin.llmd')),
+    vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('llmd.agent') && lensChanges.fire()),
     answered,
     answered.event(() => lensChanges.fire()),
     vscode.languages.registerCodeLensProvider(selector, {
@@ -530,12 +538,13 @@ export function activate(context: vscode.ExtensionContext) {
             new vscode.CodeLens(range, { title: '$(lightbulb) Plan', tooltip: 'Write what is unclear into the step as questions, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
           );
         }
-        // A ? gets its answers to pick. With none yet, Claude can write them.
+        // A ? gets its answers to pick. With none yet, the agent can write them.
+        const { name } = agent();
         for (const q of questionsOf(text)) {
           const range = doc.lineAt(q.line).range;
           if (!q.answers.length) lenses.push(new vscode.CodeLens(range, answering.has(`${doc.uri}#${q.question}`)
-            ? { title: '$(loading~spin) Claude is answering…', command: '' }
-            : { title: '$(sparkle) Ask Claude', tooltip: 'Claude reads the step and its code, and writes answers to pick from', command: 'llmd.suggest', arguments: [doc.uri, q.line] }));
+            ? { title: `$(loading~spin) ${name} is answering…`, command: '' }
+            : { title: `$(sparkle) Ask ${name}`, tooltip: `${name} reads the step and its code, and writes answers to pick from`, command: 'llmd.suggest', arguments: [doc.uri, q.line] }));
           for (const a of q.answers) {
             const title = (a.recommended ? '$(star-full) ' : '') + (a.choice.length > 32 ? a.choice.slice(0, 31) + '…' : a.choice);
             lenses.push(new vscode.CodeLens(range, { title, tooltip: `Decide: ${a.text}`, command: 'llmd.decide', arguments: [doc.uri, q.line, a.text] }));

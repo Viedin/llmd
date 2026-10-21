@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { agentArgs, allowRules, answersIn, answersPrompt, render, stepPrompt } from './agent';
+import { agentArgs, allowRules, answersIn, answersPrompt, render, startedIn, stepPrompt } from './agent';
 import { OutlineNode, openSteps, parseOutline, placeIn, questionsOf, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
 import { themeCss } from './theme';
@@ -104,9 +104,13 @@ const prompt = stepPrompt('implement', step, '.llmd/a.llmd');
 assert.strictEqual(prompt, `implement the step "Don't spend $HOME" in .llmd/a.llmd`);
 assert.ok(stepPrompt('plan', 'Export', 'a.llmd').startsWith('plan the step "Export" in a.llmd') &&
   stepPrompt('plan', 'Export', 'a.llmd').includes("Don't write any code"));
-// A headless run takes the prompt last, after "--", and resumes the step's session when it has one.
-assert.deepStrictEqual(agentArgs('-x'), ['-p', '--output-format', 'stream-json', '--verbose', '--', '-x']);
-assert.deepStrictEqual(agentArgs(prompt, 'abc').slice(4), ['--resume', 'abc', '--', prompt]);
+// A headless Claude takes the prompt last, after "--", and resumes the step's session when it has one.
+assert.deepStrictEqual(agentArgs('claude', '-x'), { args: ['-p', '--output-format', 'stream-json', '--verbose', '--', '-x'], input: '' });
+assert.deepStrictEqual(agentArgs('claude', prompt, 'abc').args.slice(4), ['--resume', 'abc', '--', prompt]);
+assert.deepStrictEqual(agentArgs('claude', 'x', undefined, true).args.slice(4, 6), ['--disallowedTools', 'Edit Write MultiEdit NotebookEdit Bash']);
+// Codex gets the prompt on stdin, and its sandbox before the session it resumes.
+assert.deepStrictEqual(agentArgs('codex', '-x', 'abc'), { args: ['--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', 'resume', 'abc'], input: '-x' });
+assert.deepStrictEqual(agentArgs('codex', 'x', undefined, true).args, ['--json', '--skip-git-repo-check', '--sandbox', 'read-only']);
 
 // Events shaped like claude's stream-json output: only text, tool calls, denials and errors are shown.
 const root = '/code/app';
@@ -128,6 +132,32 @@ assert.deepStrictEqual(stream.map((e) => render(e, root)), [
   [{ kind: 'error', text: 'Not allowed: Bash go test ./...', allow: ['Bash(go test *)'] }],
   [{ kind: 'error', text: 'No conversation found' }],
 ]);
+
+// Events shaped like `codex exec --json`'s: its messages, commands, file changes and errors read as Claude's do.
+const thread = [
+  { type: 'thread.started', thread_id: 't1' },
+  { type: 'turn.started' },
+  { type: 'item.completed', item: { id: 'i0', type: 'reasoning', text: 'hmm' } },
+  { type: 'item.started', item: { id: 'i1', type: 'command_execution', command: "/bin/zsh -lc 'go build ./...'", status: 'in_progress' } },
+  { type: 'item.completed', item: { id: 'i1', type: 'command_execution', command: "/bin/zsh -lc 'go build ./...'", exit_code: 0, status: 'completed' } },
+  { type: 'item.completed', item: { id: 'i2', type: 'file_change', changes: [{ path: '/code/app/cmd/main.go', kind: 'update' }, { path: 'new.go', kind: 'add' }], status: 'completed' } },
+  { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'Built **it**.' } },
+  { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } },
+  { type: 'turn.failed', error: { message: 'stream disconnected' } },
+];
+assert.deepStrictEqual(thread.map((e) => render(e, root)), [
+  [],
+  [],
+  [],
+  [{ kind: 'tool', text: 'Bash go build ./...' }],
+  [],
+  [{ kind: 'tool', text: 'Edit cmd/main.go', file: '/code/app/cmd/main.go' }, { kind: 'tool', text: 'Write new.go', file: '/code/app/new.go' }],
+  [{ kind: 'text', text: 'Built **it**.' }],
+  [],
+  [{ kind: 'error', text: 'stream disconnected' }],
+]);
+// Both report the session they're in first.
+assert.deepStrictEqual([stream[0], stream[5], thread[0], thread[1]].map(startedIn), ['s1', undefined, 't1', undefined]);
 
 const models = [
   'lang: go', //                 0

@@ -49,7 +49,7 @@ function draw() {
   drawStep();
   drawChat();
   const input = $('input');
-  input.placeholder = state.working ? 'Claude is working. Type your next message…' : 'Reply to Claude, or ask about this step';
+  input.placeholder = state.working ? `${state.agent} is working. Type your next message…` : `Reply to ${state.agent}, or ask about this step`;
   const send = $('send');
   send.textContent = state.working ? '■' : '↑';
   send.title = state.working ? 'Stop' : 'Send (Enter)';
@@ -67,7 +67,7 @@ function status() {
 function drawBar() {
   const [kind, text] = status();
   const open = !state.working && !state.ticked && !state.done;
-  // Done is there once Claude ticked the step and the code has everything it lists.
+  // Done is there once the agent ticked the step and the code has everything it lists.
   const finish = !state.working && state.ticked && !state.missing.length && !state.done;
   $('bar').innerHTML = `<span class="crumb">${esc(state.file)}</span><span class="sep">›</span><h1>${esc(state.step)}</h1>
     <span class="status ${kind}"><span class="pip"></span>${esc(text)}</span><span class="grow"></span>
@@ -82,7 +82,7 @@ function drawStep() {
   const rows = state.before ? diff(state.before, state.lines) : state.lines.map((t) => ['same', t]);
   const marks = {};
   for (const [l, s, e, c] of state.marks) (marks[l] ??= []).push([s, e, c]);
-  // A ? is answered by clicking one of its answers, as in the editor. Not while Claude works on it.
+  // A ? is answered by clicking one of its answers, as in the editor. Not while the agent works on it.
   const picks = {};
   if (!state.working && !state.done) for (const q of state.questions) for (const a of q.answers) picks[a.line] = { line: q.line, answer: a.text, why: a.why };
   let n = 0;
@@ -115,7 +115,7 @@ function drawReview(changes) {
   const write = $('commit').querySelector('[data-act="write"]');
   write.disabled = state.drafting || !state.done; // the commit waits for the step to be done
   $('commitButton').disabled = !state.done;
-  write.textContent = state.drafting ? 'Claude is writing…' : '✨ Write with Claude';
+  write.textContent = state.drafting ? `${state.agent} is writing…` : `✨ Write with ${state.agent}`;
   $('committed').innerHTML = state.committed ? `<span class="tick">✓</span> Committed <code>${esc(state.committed)}</code>` : '';
   $('landed').innerHTML = changes || `<p class="hint">${state.git ? 'No files changed since the step\'s run started, so there\'s nothing to commit.' : 'Not a git repository, so there are no changes to show or commit.'}</p>`;
 }
@@ -209,7 +209,7 @@ function diff(a, b) {
 function drawChat() {
   const log = $('log');
   const messages = state.messages.map((m, i) => `<div class="msg ${m.who}">${parts(m.parts, i, i === state.messages.length - 1)}</div>`).join('');
-  log.innerHTML = (messages || `<div class="empty"><p>Ask Claude about this step, or click <b>▶ Implement</b> to build it.</p></div>`) +
+  log.innerHTML = (messages || `<div class="empty"><p>Ask ${esc(state.agent)} about this step, or click <b>▶ Implement</b> to build it.</p></div>`) +
     (state.working ? '<div class="working"><span></span><span></span><span></span></div>' : '');
   if (follow) log.scrollTop = log.scrollHeight;
 }
@@ -290,7 +290,7 @@ input.addEventListener('keydown', (e) => {
 });
 $('composer').addEventListener('submit', (e) => {
   e.preventDefault();
-  // While Claude works, the button stops it; Enter leaves your next message where it is.
+  // While the agent works, the button stops it; Enter leaves your next message where it is.
   if (state?.working) return e.submitter === $('send') && vscode.postMessage({ type: 'stop' });
   const text = input.value.trim();
   if (!text) return;

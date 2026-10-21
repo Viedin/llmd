@@ -1,16 +1,16 @@
 import { ChildProcess, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { agentArgs, Part, render, stepPrompt } from './agent';
+import { AGENTS, AgentId, agentArgs, Part, render, startedIn, stepPrompt } from './agent';
 import { freshSpans, missing, onDidChangeCode, typeSpansOf, whereNames } from './code';
 import { openSteps, questionsOf, stepSection } from './outline';
 import { projectOf } from './refs';
 import { themeCss } from './theme';
 
 // A step's run. Implement or Plan turns the spec's editor into the step's own chat, in the same spot: the step stays on the
-// left, live as the agent edits it, and the conversation is on the right. Each step is one fresh claude session, run headless.
-// The plan is intent and the code is the proof: once Claude ticks the step and the code has what it lists, Done takes it out
-// of the spec, and the run becomes its review.
+// left, live as the agent edits it, and the conversation is on the right. Each step is one fresh session of the agent, Claude
+// or Codex, run headless. The plan is intent and the code is the proof: once the agent ticks the step and the code has what
+// it lists, Done takes it out of the spec, and the run becomes its review.
 
 // @paths resolve from the project: the folder holding .llmd/, else the workspace folder, like Claude Code's @ mentions.
 export function rootOf(uri: vscode.Uri): vscode.Uri {
@@ -20,7 +20,17 @@ export function rootOf(uri: vscode.Uri): vscode.Uri {
   return ws ? ws.uri : vscode.Uri.file(path.dirname(uri.fsPath));
 }
 
-const DEFAULT_COMMAND = 'claude --permission-mode auto';
+// The agent picked in the settings: its id, its name and the command that starts it, split into words.
+// shortcut: the command's flags can't hold quoted spaces
+export function agent() {
+  const settings = vscode.workspace.getConfiguration('llmd');
+  const id: AgentId = settings.get('agent') === 'codex' ? 'codex' : 'claude';
+  const [program, ...flags] = (settings.get<string>(`${id}Command`) || AGENTS[id].command).trim().split(/\s+/);
+  return { id, name: AGENTS[id].name, program, flags };
+}
+
+// Where a step's session with an agent is kept. Claude's is under the key it always had.
+const sessionKey = (id: AgentId, key: string) => `session ${id === 'claude' ? '' : id + ' '}${key}`;
 
 interface Message {
   who: 'you' | 'claude';
@@ -51,7 +61,7 @@ export interface Run {
   base?: string; // the git tree of the working tree when the step's first run started, if it was a repository then
   repo?: { top: string; base: string }; // the repository and the tree its diffs are from, once they're read
   diffs?: Diff[];
-  drafting?: boolean; // Claude is writing the commit message
+  drafting?: boolean; // the agent is writing the commit message
   committed?: string; // "<hash> <subject>" once the step's changes are committed
   child?: ChildProcess;
   stopped?: boolean;
@@ -59,7 +69,7 @@ export interface Run {
 }
 
 export const runs = new Map<string, Run>(); // "<spec uri>#<step>" → its run
-let state: vscode.Memento; // per step: its claude session and its run (messages and the step as it was)
+let state: vscode.Memento; // per step: its session with each agent and its run (messages and the step as it was)
 let media: vscode.Uri;
 let log: vscode.LogOutputChannel; // the LLMD output channel: what the runs' tabs report, like how Accept's animation went
 
@@ -90,7 +100,7 @@ function restart(run: Run) {
   if (!run.done) return;
   Object.assign(run, { messages: [], before: undefined, last: undefined, mode: undefined, done: undefined, base: undefined, repo: undefined,
     diffs: undefined, committed: undefined });
-  state.update('session ' + runKey(run.spec, run.step), undefined);
+  for (const id of Object.keys(AGENTS) as AgentId[]) state.update(sessionKey(id, runKey(run.spec, run.step)), undefined);
   save(run);
   post(run);
 }
@@ -179,6 +189,7 @@ async function post(run: Run) {
     done: !!run.done,
     mode: run.mode,
     working: !!run.child,
+    agent: agent().name,
     drafting: !!run.drafting,
     committed: run.committed,
     next: run.done ? (await nextSteps(rootOf(run.spec))).slice(0, 8) : [],
@@ -368,24 +379,36 @@ export async function openChanges(run: Run, file?: string) {
     : vscode.window.showTextDocument(old ?? uri);
 }
 
-// Claude writes the commit message for a done step, from the step and its diff, in a one-off headless run.
-// One question to claude, in a session of its own, and its answer; undefined when it fails. `flags` go before the prompt.
-export async function askOnce(root: vscode.Uri, prompt: string, flags: string[] = []): Promise<string | undefined> {
-  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || DEFAULT_COMMAND;
-  const [program, ...own] = command.trim().split(/\s+/);
-  const out = await new Promise<string>((resolve) => {
-    const child = execFile(program, [...own, ...flags, ...agentArgs(prompt)], { cwd: root.fsPath, maxBuffer: 16 << 20 }, (_err, stdout) => resolve(stdout ?? ''));
-    child.stdin?.end(); // claude -p waits for stdin to end
+// One question to the agent, in a session of its own: its answer, or why there's none, like "Selected model is at
+// capacity." With `readOnly` it may read the project but change nothing.
+export async function askOnce(root: vscode.Uri, prompt: string, readOnly = false): Promise<{ answer?: string; error?: string }> {
+  const { id, program, flags } = agent();
+  const { args, input } = agentArgs(id, prompt, undefined, readOnly);
+  const { out, failed } = await new Promise<{ out: string; failed?: string }>((resolve) => {
+    const child = execFile(program, [...flags, ...args], { cwd: root.fsPath, maxBuffer: 16 << 20 }, (err, stdout, stderr) =>
+      resolve({ out: stdout ?? '', failed: err ? String(stderr ?? '').trim().split('\n').at(-1) || err.message : undefined }));
+    child.stdin?.end(input); // claude -p waits for stdin to end; codex reads the prompt from it
   });
-  return out.split('\n').map((l) => {
+  const events = out.split('\n').map((l) => {
     try {
       return JSON.parse(l);
     } catch {
       return undefined;
     }
-  }).find((e) => e?.type === 'result' && !e.is_error)?.result;
+  });
+  // Claude's answer is its result; Codex's, its last message of a turn that didn't fail.
+  const answer = id === 'claude' ? events.find((e) => e?.type === 'result' && !e.is_error)?.result
+    : events.some((e) => e?.type === 'turn.failed') ? undefined
+    : events.filter((e) => e?.type === 'item.completed' && e.item?.type === 'agent_message').at(-1)?.item.text;
+  if (answer) return { answer };
+  // Why, as the run would show it: the agent's last error, else what the program said as it failed.
+  return { error: events.flatMap((e) => render(e, root.fsPath)).filter((p) => p.kind === 'error').at(-1)?.text ?? failed };
 }
 
+// The end of a sentence about what failed: ": <why>." when the agent said why, else ".".
+export const why = (error?: string) => (error?.trim() ? `: ${error.trim().replace(/\.?$/, '.')}` : '.');
+
+// The agent writes the commit message for a done step, from the step and its diff, in a one-off headless run.
 export async function writeMessage(run: Run) {
   if (run.drafting) return;
   const root = rootOf(run.spec).fsPath;
@@ -396,10 +419,10 @@ export async function writeMessage(run: Run) {
     'Reply with only the message: a subject line, then a blank line and a short body only if it helps. No code fences, and no tools.';
   run.drafting = true;
   await post(run);
-  const result = await askOnce(rootOf(run.spec), prompt);
+  const { answer: result, error } = await askOnce(rootOf(run.spec), prompt, true);
   run.drafting = false;
   await post(run);
-  if (!result) return vscode.window.showErrorMessage("Claude couldn't write the commit message. Write it yourself, or try again.");
+  if (!result) return vscode.window.showErrorMessage(`${agent().name} couldn't write the commit message${why(error)} Write it yourself, or try again.`);
   const text = result.replace(/^```\w*\n|\n?```\s*$/g, '').trim();
   run.panel?.webview.postMessage({ type: 'commitMessage', text });
   return text;
@@ -472,9 +495,10 @@ function stop(run: Run) {
   run.child.kill();
 }
 
-// One message of the step's chat: a headless claude run at the project root, its answer streamed into the run.
+// One message of the step's chat: a headless run of the agent at the project root, its answer streamed into the run.
 async function ask(run: Run, text: string, prompt: string) {
-  if (run.child) return vscode.window.showInformationMessage('Claude is still working on this step. Wait for it, or stop it.');
+  const { id, name, program, flags } = agent();
+  if (run.child) return vscode.window.showInformationMessage(`${name} is still working on this step. Wait for it, or stop it.`);
   const key = runKey(run.spec, run.step);
   const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === run.spec.toString());
   if (doc?.isDirty) await doc.save();
@@ -490,18 +514,18 @@ async function ask(run: Run, text: string, prompt: string) {
   }));
 
   const root = rootOf(run.spec).fsPath;
-  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || DEFAULT_COMMAND;
-  const [program, ...flags] = command.trim().split(/\s+/); // shortcut: flags can't hold quoted spaces
-  const sessionKey = 'session ' + key;
-  const session = state.get<string>(sessionKey);
-  // stdin is closed: claude -p would otherwise wait for it to end before starting.
-  // ponytail: no shell, so on Windows an npm-installed claude.cmd won't start; the native installer's claude.exe does
-  const child = spawn(program, [...flags, ...agentArgs(prompt, session)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+  const sessionAt = sessionKey(id, key);
+  const session = state.get<string>(sessionAt);
+  const { args, input } = agentArgs(id, prompt, session);
+  // ponytail: no shell, so on Windows an npm-installed claude.cmd or codex.cmd won't start; a native .exe does
+  const child = spawn(program, [...flags, ...args], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.on('error', () => {}); // a program that never started, or exits without reading it
+  child.stdin.end(input); // claude -p waits for stdin to end before starting; codex reads the prompt from it
   run.child = child;
   run.stopped = false;
   await post(run);
 
-  let started = false; // claude reports init before anything else; a resume of a missing session never does
+  let started = false; // the agent reports its session before anything else; a resume of a missing session never does
   let pending = '';
   let errors = '';
   child.stdout.on('data', (chunk) => {
@@ -514,8 +538,11 @@ async function ask(run: Run, text: string, prompt: string) {
       } catch {
         continue;
       }
-      if (event.type === 'system' && event.subtype === 'init') started = true;
-      if (event.type === 'result' && started && event.session_id) state.update(sessionKey, event.session_id);
+      const reported = startedIn(event);
+      if (reported) {
+        started = true;
+        state.update(sessionAt, reported);
+      }
       const parts = render(event, root);
       if (parts.length) add(parts);
     }
@@ -527,7 +554,7 @@ async function ask(run: Run, text: string, prompt: string) {
     ended = true;
     const notes: Part[] = [];
     if (session && !started) {
-      state.update(sessionKey, undefined);
+      state.update(sessionAt, undefined);
       notes.push({ kind: 'error', text: 'The chat could not be resumed, so your next message starts a new one.' });
     }
     if (run.stopped) notes.push({ kind: 'error', text: 'Stopped.' });
@@ -540,7 +567,7 @@ async function ask(run: Run, text: string, prompt: string) {
       save(run); // ponytail: each step's whole run in workspace state; trim it if runs get huge
     });
   };
-  child.on('error', (e) => end(`Couldn't start ${program}: ${e.message}. Install Claude Code, or change LLMD: Agent Command in the settings.`));
+  child.on('error', (e) => end(`Couldn't start ${program}: ${e.message}. Install it, or pick another agent in LLMD's settings.`));
   child.on('close', (code) => end(code && !reply.parts.length ? errors.trim().slice(-1500) || `${program} exited with code ${code}` : undefined));
 }
 
@@ -592,7 +619,7 @@ async function readDirectory(uri: vscode.Uri): Promise<string[]> {
   }
 }
 
-// Takes the built step out of its spec, once Claude ticked it and the code has everything it lists, and the spec with its
+// Takes the built step out of its spec, once the agent ticked it and the code has everything it lists, and the spec with its
 // last step. Its run is the review.
 export async function done(run: Run) {
   if (run.child) return;
@@ -607,7 +634,7 @@ export async function done(run: Run) {
     return;
   }
   // Not awaited: the message's promise only settles once you close it.
-  if (!section.done) return void vscode.window.showWarningMessage(`"${run.step}" isn't ticked yet. Claude ticks it once it's built.`);
+  if (!section.done) return void vscode.window.showWarningMessage(`"${run.step}" isn't ticked yet. ${agent().name} ticks it once it's built.`);
   const gaps = await missing(rootOf(run.spec), section.lines);
   if (gaps.length) return void vscode.window.showWarningMessage(`"${run.step}" isn't in the code yet: ${gaps.join(', ')}.`);
   const lines = text.split(/\r?\n/);
