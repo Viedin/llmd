@@ -1,10 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CALLABLE, codeHover, CodeSymbol, CONTAINERS, missing, onDidChangeCode, searchTypes, symbolOf, symbolsOf, typeNamed, TYPES, watchCode } from './code';
-import { OutlineNode, openSteps, parseOutline, placeIn, Segment, stepSection } from './outline';
-import { done, hasRun, initRuns, nextSteps, onDidChangeRuns, openRun, rootOf, runKey, runs, runStep } from './run';
+import { CALLABLE, codeHover, CodeSymbol, CONTAINERS, freshSpans, missing, onDidChangeCode, searchTypes, symbolOf, symbolsOf, typeNamed, TYPES, typeSpansOf, watchCode } from './code';
+import { OutlineNode, openSteps, parseOutline, placeIn, questionAt, questionsOf, Segment, stepSection } from './outline';
+import { answersIn, answersPrompt } from './agent';
+import { askOnce, done, initRuns, nextSteps, openRun, rootOf, runStep, specPath } from './run';
 import { findRefs } from './refs';
-import { builtinTypes, Claim, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, ownerAbove, receiverOf, symbolName, typeSpans, typeWords, unitsOf } from './symbols';
+import { builtinTypes, Claim, claims, claimSpan, closest, findCalls, indexSymbols, inPath, inTypePosition, ownerAbove, receiverOf, Span, symbolName, unitsOf } from './symbols';
 
 async function statOrNull(uri: vscode.Uri): Promise<vscode.FileStat | null> {
   try {
@@ -49,12 +50,10 @@ export function toSymbols(nodes: OutlineNode[], doc: vscode.TextDocument): vscod
 
 const indexOf = (doc: vscode.TextDocument) => indexSymbols(parseOutline(doc.getText()));
 
+const toRange = (s: Span) => new vscode.Range(s.line, s.start, s.line, s.end);
+
 // Where a claimed type or method's name sits on its line.
-function nameRange(doc: vscode.TextDocument, c: Claim): vscode.Range {
-  const line = doc.lineAt(c.line);
-  const start = line.text.indexOf(c.name, line.firstNonWhitespaceCharacterIndex);
-  return new vscode.Range(c.line, start, c.line, start + c.name.length);
-}
+const nameRange = (doc: vscode.TextDocument, c: Claim) => toRange(claimSpan(doc.getText().split('\n'), c));
 
 // The type or method the cursor is on the name of, where the spec lists it under its unit.
 const claimAt = (doc: vscode.TextDocument, pos: vscode.Position) =>
@@ -84,11 +83,7 @@ function typeWordAt(doc: vscode.TextDocument, pos: vscode.Position) {
 
 // The types and methods the spec plans that the code doesn't have yet: under a + unit, or missing from their @ file.
 export async function newRanges(doc: vscode.TextDocument): Promise<vscode.Range[]> {
-  const ranges: vscode.Range[] = [];
-  for (const c of claims(parseOutline(doc.getText()))) {
-    if (isNew(c, c.newFile ? undefined : await codeOf(doc, c.path))) ranges.push(nameRange(doc, c));
-  }
-  return ranges;
+  return (await freshSpans(rootOf(doc.uri), doc.getText())).map(toRange);
 }
 
 // On a type or method the code has, anywhere in a line: its real hover. On one it doesn't have yet: that it's new.
@@ -203,14 +198,10 @@ export async function completeNames(doc: vscode.TextDocument, pos: vscode.Positi
 
 const typeLegend = new vscode.SemanticTokensLegend(['type']);
 
-// The spec's, the language's and the code's types in field types and signatures.
+// The spec's, the language's and the code's types in field types, signatures and after a ":".
 async function typeTokens(doc: vscode.TextDocument): Promise<vscode.SemanticTokens> {
-  const text = doc.getText();
-  const nodes = parseOutline(text);
-  const names = [...new Set(typeWords(text, nodes).map((w) => w.name))];
-  const code = (await Promise.all(names.map(async (name) => (await codeType(doc, name)) && name))).filter((n): n is string => !!n);
   const tokens = new vscode.SemanticTokensBuilder(typeLegend);
-  for (const s of typeSpans(text, nodes, code)) tokens.push(s.line, s.start, s.end - s.start, 0);
+  for (const s of await typeSpansOf(rootOf(doc.uri), doc.getText())) tokens.push(s.line, s.start, s.end - s.start, 0);
   return tokens.build();
 }
 
@@ -361,6 +352,74 @@ export function doneLines(text: string): number[] {
   return lines;
 }
 
+// Answers a ? in the spec with one of its answers: it and its answers become "// decided: <question> <answer>" where it was.
+async function decide(uri: vscode.Uri, line: number, answer: string) {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const q = questionsOf(doc.getText()).find((q) => q.line === line);
+  if (!q) return;
+  answer = answer.replace(/\s*\(recommended\)\s*$/i, '');
+  const indent = doc.lineAt(line).text.match(/^\s*/)![0];
+  const asked = q.question && (/[?:.]$/.test(q.question) ? q.question : q.question + ':');
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(uri, new vscode.Range(line, 0, q.end, doc.lineAt(q.end).text.length), `${indent}// decided: ${asked ? asked + ' ' : ''}${answer}`);
+  await vscode.workspace.applyEdit(edit);
+}
+
+const answering = new Set<string>(); // "<spec uri>#<question>" while Claude writes its answers
+const answered = new vscode.EventEmitter<void>(); // Claude started or finished answering one
+
+// Has Claude write the answers to a ? under it, to pick from: it reads the step, and the code the step points to, but
+// changes nothing.
+async function suggest(uri: vscode.Uri, line: number) {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const text = doc.getText();
+  const q = questionsOf(text).find((q) => q.line === line);
+  const key = `${uri}#${q?.question}`;
+  if (!q || answering.has(key)) return;
+  let heading = line;
+  while (heading >= 0 && !/^##\s/.test(doc.lineAt(heading).text)) heading--;
+  const step = heading < 0 ? undefined : stepSection(text, doc.lineAt(heading).text.replace(/^##\s+(?:\[[ xX]\]\s*)?/, '').trim());
+  answering.add(key);
+  answered.fire();
+  const reply = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Claude is answering' }, () =>
+    askOnce(rootOf(uri), answersPrompt(specPath(uri), step?.lines ?? text.split('\n'), q.question), ['--disallowedTools', 'Edit Write MultiEdit NotebookEdit Bash']));
+  answering.delete(key);
+  answered.fire();
+  const answers = answersIn(reply ?? '');
+  if (!answers.length) return void vscode.window.showErrorMessage(`Claude didn't answer "${q.question}". Try again, or write your own.`);
+  // You may have written on while Claude thought: the question is the one by that text nearest to where it was.
+  const now = questionsOf(doc.getText()).filter((x) => x.question === q.question).sort((a, b) => Math.abs(a.line - line) - Math.abs(b.line - line))[0];
+  if (!now) return;
+  const indent = ' '.repeat(doc.lineAt(now.line).firstNonWhitespaceCharacterIndex + 2);
+  const edit = new vscode.WorkspaceEdit();
+  edit.insert(uri, doc.lineAt(now.end).range.end, answers.map((a) => `\n${indent}- ${a}`).join(''));
+  await vscode.workspace.applyEdit(edit);
+}
+
+const KEY = process.platform === 'darwin' ? '⌘↵' : 'Ctrl+Enter';
+
+// What ⌘↵ does on the cursor's line, for its hint: pick the answer it's on, ask Claude for answers, or choose one.
+function onQuestion(editor: vscode.TextEditor): string | undefined {
+  const at = editor.document.languageId === 'llmd' ? questionAt(editor.document.getText(), editor.selection.active.line) : undefined;
+  return !at ? undefined : at.answer ? 'pick this answer' : at.question.answers.length ? 'choose an answer' : 'ask Claude for answers';
+}
+
+// ⌘↵ on a question or an answer: the keyboard's way to answer it.
+async function answerHere(editor: vscode.TextEditor) {
+  const doc = editor.document;
+  const at = questionAt(doc.getText(), editor.selection.active.line);
+  if (!at) return;
+  const { question, answer } = at;
+  if (answer) return decide(doc.uri, question.line, answer.text);
+  if (!question.answers.length) return suggest(doc.uri, question.line);
+  const picked = await vscode.window.showQuickPick(question.answers.map((a) => ({
+    label: (a.recommended ? '$(star-full) ' : '') + a.choice,
+    description: a.tradeoff,
+    answer: a,
+  })), { placeHolder: question.question || 'Pick an answer' });
+  if (picked) return decide(doc.uri, question.line, picked.answer.text);
+}
+
 // Enter on an empty "- ", "* " or "! " steps out one level and keeps the bullet, so a method's logic ends in its next sibling;
 // at the outermost level it drops the bullet. Any other Enter is a normal one.
 async function enter(editor: vscode.TextEditor) {
@@ -391,23 +450,49 @@ export function activate(context: vscode.ExtensionContext) {
   // Done steps are dimmed, and what the step adds to the code is colored as new.
   const dim = vscode.window.createTextEditorDecorationType({ opacity: '0.5' });
   const fresh = vscode.window.createTextEditorDecorationType({ color: new vscode.ThemeColor('gitDecoration.addedResourceForeground') });
+  // A ? waits on you, a ! has to pass.
+  const asks = vscode.window.createTextEditorDecorationType({ color: new vscode.ThemeColor('editorWarning.foreground'), fontWeight: 'bold' });
+  const checks = vscode.window.createTextEditorDecorationType({ color: new vscode.ThemeColor('testing.iconPassed'), fontWeight: 'bold' });
+  // On a question or an answer, what ⌘↵ does there, at the end of the line; the key works only there.
+  const hint = vscode.window.createTextEditorDecorationType({ after: { color: new vscode.ThemeColor('editorCodeLens.foreground'), margin: '0 0 0 2em' } });
+  const showHint = (editor: vscode.TextEditor) => {
+    const what = onQuestion(editor);
+    vscode.commands.executeCommand('setContext', 'llmd.onQuestion', !!what);
+    if (editor.document.languageId !== 'llmd') return;
+    const end = editor.document.lineAt(editor.selection.active.line).range.end;
+    editor.setDecorations(hint, what ? [{ range: new vscode.Range(end, end), renderOptions: { after: { contentText: `${KEY} ${what}` } } }] : []);
+  };
   const decorate = async (editor: vscode.TextEditor) => {
     const doc = editor.document;
     if (doc.languageId !== 'llmd') return;
-    editor.setDecorations(dim, doneLines(doc.getText()).map((i) => doc.lineAt(i).range));
+    // Done steps, and the trade-offs of a question's answers, so the choices stand out.
+    const tradeoffs = questionsOf(doc.getText()).flatMap((q) => q.answers).map((a) => new vscode.Range(a.line, a.why, a.line, doc.lineAt(a.line).text.length));
+    editor.setDecorations(dim, [...doneLines(doc.getText()).map((i) => doc.lineAt(i).range), ...tradeoffs]);
+    if (editor === vscode.window.activeTextEditor) showHint(editor);
+    const marks = (re: RegExp) => doc.getText().split('\n').flatMap((l, i) => {
+      const at = l.search(re);
+      return at < 0 ? [] : [new vscode.Range(i, at, i, at + 1)];
+    });
+    editor.setDecorations(asks, marks(/(?<=^\s*(?:-\s+)?)\?/));
+    editor.setDecorations(checks, marks(/(?<=^\s*(?:-\s+)?)!(?=\s|$)/));
     const version = doc.version;
     const ranges = await newRanges(doc);
     if (doc.version === version) editor.setDecorations(fresh, ranges); // a newer edit decorates for itself
   };
   vscode.window.visibleTextEditors.forEach(decorate);
-  const lensChanges = new vscode.EventEmitter<void>(); // a run started or ended, or the code changed under a built step
+  const lensChanges = new vscode.EventEmitter<void>(); // the code changed under a built step, or Claude is answering a ?
 
   context.subscriptions.push(
     diagnostics,
     dim,
     fresh,
+    asks,
+    checks,
+    hint,
+    vscode.window.onDidChangeTextEditorSelection((e) => showHint(e.textEditor)),
+    vscode.window.onDidChangeActiveTextEditor((editor) => editor ? showHint(editor) : vscode.commands.executeCommand('setContext', 'llmd.onQuestion', false)),
+    vscode.commands.registerCommand('llmd.answer', () => vscode.window.activeTextEditor && answerHere(vscode.window.activeTextEditor)),
     lensChanges,
-    onDidChangeRuns(() => lensChanges.fire()),
     onDidChangeCode(() => {
       lensChanges.fire();
       vscode.window.visibleTextEditors.forEach(decorate);
@@ -428,25 +513,33 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('llmd.plan', (uri: vscode.Uri, step: string) => runStep('plan', uri, step)),
     vscode.commands.registerCommand('llmd.done', (spec: vscode.Uri, step: string) => done(openRun(spec, step))),
     vscode.commands.registerCommand('llmd.addToStep', addToStep),
+    vscode.commands.registerCommand('llmd.decide', decide),
+    vscode.commands.registerCommand('llmd.suggest', suggest),
+    answered,
+    answered.event(() => lensChanges.fire()),
     vscode.languages.registerCodeLensProvider(selector, {
       onDidChangeCodeLenses: lensChanges.event,
       provideCodeLenses: async (doc) => {
         const text = doc.getText();
         const lenses: vscode.CodeLens[] = [];
-        // A step that has a run gets a way back to it, which says when the agent is still working there.
-        const back = (range: vscode.Range, step: string) => {
-          if (!hasRun(doc.uri, step)) return;
-          const working = !!runs.get(runKey(doc.uri, step))?.child;
-          lenses.push(new vscode.CodeLens(range, { title: working ? '$(loading~spin) Working…' : '$(comment-discussion) Run', tooltip: "Open this step's run", command: 'llmd.run', arguments: [doc.uri, step] }));
-        };
+        // Implement and Plan start right away, in the step's run, which goes on with what you told it there before.
         for (const s of openSteps(text)) {
           const range = doc.lineAt(s.line).range;
-          // Once a step has a run, Implement and Plan are in its run's bar, so the lens just goes back there.
-          if (hasRun(doc.uri, s.title)) back(range, s.title);
-          else lenses.push(
+          lenses.push(
             new vscode.CodeLens(range, { title: '$(play) Implement', tooltip: 'Run the agent on this step', command: 'llmd.implement', arguments: [doc.uri, s.title] }),
-            new vscode.CodeLens(range, { title: '$(lightbulb) Plan', tooltip: 'Talk this step through with the agent, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
+            new vscode.CodeLens(range, { title: '$(lightbulb) Plan', tooltip: 'Write what is unclear into the step as questions, without writing code', command: 'llmd.plan', arguments: [doc.uri, s.title] }),
           );
+        }
+        // A ? gets its answers to pick. With none yet, Claude can write them.
+        for (const q of questionsOf(text)) {
+          const range = doc.lineAt(q.line).range;
+          if (!q.answers.length) lenses.push(new vscode.CodeLens(range, answering.has(`${doc.uri}#${q.question}`)
+            ? { title: '$(loading~spin) Claude is answering…', command: '' }
+            : { title: '$(sparkle) Ask Claude', tooltip: 'Claude reads the step and its code, and writes answers to pick from', command: 'llmd.suggest', arguments: [doc.uri, q.line] }));
+          for (const a of q.answers) {
+            const title = (a.recommended ? '$(star-full) ' : '') + (a.choice.length > 32 ? a.choice.slice(0, 31) + '…' : a.choice);
+            lenses.push(new vscode.CodeLens(range, { title, tooltip: `Decide: ${a.text}`, command: 'llmd.decide', arguments: [doc.uri, q.line, a.text] }));
+          }
         }
         // A built step waits for you. Done takes it out of the spec, once the code has everything the step lists.
         for (const [i, line] of text.split(/\r?\n/).entries()) {
@@ -457,7 +550,6 @@ export function activate(context: vscode.ExtensionContext) {
           lenses.push(new vscode.CodeLens(range, gaps.length
             ? { title: `$(warning) Not in the code yet: ${gaps[0]}${gaps.length > 1 ? ` and ${gaps.length - 1} more` : ''}`, tooltip: gaps.join('\n'), command: '' }
             : { title: '$(check) Done', tooltip: 'Take this step out of the spec: the code has it now', command: 'llmd.done', arguments: [doc.uri, step] }));
-          back(range, step);
         }
         return lenses;
       },

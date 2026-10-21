@@ -8,9 +8,13 @@ let follow = true; // keep the conversation scrolled to the newest message
 const openDiffs = new Set(); // files whose changes you unfolded
 let changesOpen = true; // the Changes section, until you fold it
 let moving = false; // the Accept transition is playing
+// The step's colors, in the theme's token colors the extension reads from its file. run.css has fallbacks.
+const theme = new CSSStyleSheet();
+document.adoptedStyleSheets = [...document.adoptedStyleSheets, theme];
 
 window.addEventListener('message', (e) => {
   if (e.data.type === 'commitMessage') return void ($('message').value = e.data.text);
+  if (e.data.type === 'theme') return void theme.replaceSync(e.data.css);
   const finishing = state && !reviewing(state) && reviewing(e.data);
   state = e.data;
   vscode.setState({ key: state.key }); // so the tab comes back on this step after a reload
@@ -76,9 +80,22 @@ function drawBar() {
 // The step as it is in the spec now, with what changed since its run started: added lines green, removed ones struck.
 function drawStep() {
   const rows = state.before ? diff(state.before, state.lines) : state.lines.map((t) => ['same', t]);
+  const marks = {};
+  for (const [l, s, e, c] of state.marks) (marks[l] ??= []).push([s, e, c]);
+  // A ? is answered by clicking one of its answers, as in the editor. Not while Claude works on it.
+  const picks = {};
+  if (!state.working && !state.done) for (const q of state.questions) for (const a of q.answers) picks[a.line] = { line: q.line, answer: a.text, why: a.why };
   let n = 0;
-  const lines = rows.map(([change, text]) =>
-    `<div class="row ${change}"><span class="num">${change === 'del' ? '' : ++n}</span><span class="mark">${change === 'add' ? '+' : change === 'del' ? '−' : ''}</span>${line(text)}</div>`).join('');
+  let fence = false;
+  const lines = rows.map(([change, text]) => {
+    const fenced = fence || /^\s*(```|~~~)/.test(text);
+    if (/^\s*(```|~~~)/.test(text)) fence = !fence;
+    const i = change === 'del' ? -1 : n++;
+    const pick = picks[i];
+    const answer = pick ? ` data-act="decide" data-line="${pick.line}" data-answer="${esc(pick.answer)}" title="Decide: ${esc(pick.answer)}"` : '';
+    return `<div class="row ${change}${answer ? ' pick' : ''}"${answer}><span class="num">${i < 0 ? '' : i + 1}</span>` +
+      `<span class="mark">${change === 'add' ? '+' : change === 'del' ? '−' : ''}</span>${line(text, pick ? [...(marks[i] ?? []), [pick.why, text.length, 't-tradeoff']] : marks[i], fenced)}</div>`;
+  }).join('');
   const changes = state.git ? diffs() : state.files.length
     ? `<div class="changes"><h2>Changed files</h2><p class="hint">Not a git repository, so only the names. Run <code>git init</code> and commit, and the next step shows its changes here.</p>${state.files.map((f) => `<button class="file" data-act="file" data-path="${esc(f.path)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
@@ -146,16 +163,30 @@ function hunks(d) {
   return `<div class="dlines">${shown.join('')}</div>`;
 }
 
-// One spec line, colored like the editor colors .llmd files.
-function line(text) {
+// One spec line, colored the way the editor colors it: the grammar's tokens (tokens.js), then what the editor adds on
+// top, as `marks` of [start, end, class]: the code's types and the names that are new. Brackets get pair colors by depth,
+// outside comments, paths and code, as in the editor.
+function line(text, marks = [], fenced = false) {
   if (!text.trim()) return '<span class="l"></span>';
-  const kind = /^\s*\/\//.test(text) ? 'comment' : /^\s*\?/.test(text) ? 'question' : /^\s*!\s/.test(text) ? 'check'
-    : /^\s*\*\s/.test(text) ? 'free' : /^\s*~?[@+][\w\-./]+\s*$/.test(text) ? 'unit' : /^\s*(?:-\s+)?:\s*\w/.test(text) ? 'type'
-    : /^#/.test(text) ? 'heading' : /^\s*-\s+~/.test(text) ? 'removed' : 'plain';
-  let html = esc(text).replace(/(^|[^\w@])(@[\w\-./]+)/g, '$1<span class="ref">$2</span>');
-  if (kind === 'plain') html = html.replace(/^(\s*-\s+(?:\[[ xX]\]\s+)?(?:\([^)]*\)\s*)?)([A-Za-z_]\w*)(?=\()/, '$1<span class="method">$2</span>');
-  if (kind === 'heading') html = html.replace(/\[[xX]\]/, '<span class="tick">✓</span>');
-  return `<span class="l k-${kind}">${html}</span>`;
+  const cuts = marks.flatMap(([s, e]) => [s, e]);
+  let depth = 0;
+  let html = '';
+  for (const [s, e, token] of fenced ? [[0, text.length, 'plain']] : grammar(text)) {
+    const at = [s, ...cuts.filter((c) => c > s && c < e).sort((a, b) => a - b), e];
+    for (let k = 1; k < at.length; k++) {
+      const on = marks.filter(([ms, me]) => ms <= at[k - 1] && at[k] <= me).map(([, , c]) => ' ' + c).join('');
+      let piece = esc(text.slice(at[k - 1], at[k]));
+      if (!fenced && !/comment|path|raw/.test(token)) piece = piece.replace(/[()[\]{}]/g, (b) => {
+        const opens = '([{'.includes(b);
+        if (!opens) depth = Math.max(0, depth - 1);
+        const span = `<span class="b${(depth % 3) + 1}">${b}</span>`;
+        if (opens) depth++;
+        return span;
+      });
+      html += `<span class="t-${token}${on}">${piece}</span>`;
+    }
+  }
+  return `<span class="l">${html}</span>`;
 }
 
 // Line diff by longest common subsequence: [change, text] rows, change being 'same', 'add' or 'del'.
@@ -230,6 +261,7 @@ document.addEventListener('click', (e) => {
     vscode.postMessage({ type: 'continue' });
   }
   if (act === 'file') vscode.postMessage({ type: 'file', path: el.dataset.path });
+  if (act === 'decide') vscode.postMessage({ type: 'decide', line: Number(el.dataset.line), answer: el.dataset.answer });
 });
 
 // Folded and unfolded stay that way when the run redraws.

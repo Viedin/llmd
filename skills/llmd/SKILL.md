@@ -40,8 +40,8 @@ Indent with 2 spaces. Each level belongs to the line above it.
 | `* some line` | A **free line**: what should happen, and you design how. Under a unit, type or method, or at step level, where you also choose the files. |
 | `Name.Method` inside a logic line | A call to another unit's method. |
 | `@path` inside any line | A reference: read that file or folder for context. |
-| `! some line` | A **check**: something that must hold once the step is built. Under a unit, type or method, or at step level for the step as a whole. You verify it before ticking; you never rewrite it. |
-| `? question` | An open question. It blocks the step it sits in. |
+| `! some line` or `- ! some line` | A **check**: something that must hold once the step is built. Under a unit, type or method, or at step level for the step as a whole. You verify it before ticking; you never rewrite it. |
+| `? question` or `- ? question` | An open question. It blocks the step it sits in. `- ` lines indented under it are the answers to pick from; the user picks one in the editor, which turns it into `// decided: ...`. |
 | `- ~Name()`, `~@old.go`, `- ~line` | A removal: build it by deleting that method, file or behaviour. A rename is a `~` of the old name plus the new one. |
 | `// note` | A note from the user. Context only, never a task. |
 
@@ -82,7 +82,7 @@ lang: go
 
 1. **Read first.** Read the whole `.llmd` file (ticked steps are context), every `@` unit file in the step, and every `@` reference before you write anything. The code is the truth about what exists.
    - **Skim the other specs** in `.llmd/` for an overview of the rest of the project: only their `##` step titles and whether they're ticked, e.g. `grep -n '^## ' .llmd/*.llmd`. Open another spec in full only when it mentions a file this step touches; find those with a search for the step's paths, e.g. `grep -l 'internal/models/book.go' .llmd/*.llmd`. If one of its open steps plans different changes to the same file, raise it with your questions.
-2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess in a `-` line. Once the user answers, replace each `?` line with `// decided: <answer>` in the same place, so the step keeps its decisions.
+2. **Ask every blocking `?` in the step at once**, before writing code. Also ask about anything else you'd otherwise have to guess in a `-` line. Once the user answers, replace each `?` line, and the answers listed under it, with `// decided: <answer>` in the same place, so the step keeps its decisions. A `// decided:` line is an answer already given: follow it.
 3. **Go top-down, one unit at a time**, in the order the step lists them.
 4. **Stay inside the step.** Only create its `+` files and only change its `@` unit files. If the work needs any other file changed, ask first. The exception is a `*` line at step level, with no unit above it: there you choose the files.
 5. **Follow the logic lines in order.** They describe intent: fill in the obvious details (error handling, imports, the project's existing style and helpers) but don't add behaviour the step doesn't ask for. If a line is ambiguous, ask instead of guessing.
@@ -102,6 +102,12 @@ lang: go
 "Plan the step" (or "plan the next step") means talk it through with the user before anything is built:
 
 1. **Read first**, exactly as for implementing: the whole spec, the step's files and references, and the other specs' step titles.
-2. **Discuss.** Raise everything at once: what's unclear or contradicts the code, what's missing (error cases, `!` checks the step should prove, files the step will have to touch), and what clashes with other specs. Answer the step's `?` lines with options, not just questions back.
-3. **Propose concrete spec edits:** `?` lines, `!` checks, new or changed lines, `~` lines, or whole new steps. Make them only once the user agrees.
+2. **Write the questions into the step.** Everything unclear, contradicting the code, or a real choice between designs goes into the step, where it applies, as a `?` line with 2 to 4 answers indented under it, one line each: `- <the choice, at most 6 words> — <its trade-off, at most 12 words>`, the one you recommend first, ending in ` (recommended)`. Give the step's own `?` lines that have none their answers too. The user picks in the editor, before anything is built. This is the one spec edit you make without asking:
+   ```
+   @internal/store/store.go
+     ? where should books be stored
+       - SQLite — queries and concurrent writes, one more dependency (recommended)
+       - a JSON file — no dependency, fine for one user
+   ```
+3. **Discuss the rest, and propose concrete spec edits:** what's missing (error cases, `!` checks the step should prove, files the step will have to touch), what clashes with other specs, new or changed lines, `~` lines, or whole new steps. Make those only once the user agrees.
 4. **Never write code** while planning. The step is built later, with "implement".

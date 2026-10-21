@@ -37,6 +37,19 @@ export function claims(nodes: OutlineNode[]): Claim[] {
   });
 }
 
+export interface Span {
+  line: number;
+  start: number;
+  end: number;
+}
+
+// Where a claim's name is on its line.
+export function claimSpan(lines: string[], c: Claim): Span {
+  const line = lines[c.line].replace(/\r$/, '');
+  const start = line.indexOf(c.name, line.search(/\S/));
+  return { line: c.line, start, end: start + c.name.length };
+}
+
 // The files the spec lists that exist, by @: not + ones, not folders.
 export const unitsOf = (nodes: OutlineNode[]): string[] => nodes.flatMap((n) =>
   n.kind === 'heading' ? unitsOf(n.children) : n.kind === 'unit' && !n.detail && !n.name.endsWith('/') ? [n.name] : []);
@@ -188,7 +201,7 @@ export function typeWords(text: string, nodes: OutlineNode[]): { name: string; l
 }
 
 // Known type names among typeWords, for coloring: built-in, declared in the spec, or in `code`.
-export function typeSpans(text: string, nodes: OutlineNode[], code: Iterable<string> = []): { line: number; start: number; end: number }[] {
+export function typeSpans(text: string, nodes: OutlineNode[], code: Iterable<string> = []): Span[] {
   const known = new Set([...builtinTypes(text), ...code]);
   for (const [name, d] of indexSymbols(nodes)) if (d.kind === 'type') known.add(name);
   return typeWords(text, nodes).filter((w) => known.has(w.name));

@@ -3,9 +3,22 @@ import * as path from 'path';
 // What the agent is asked to do with one step: build it, or talk it through first.
 export function stepPrompt(mode: 'implement' | 'plan', step: string, file: string): string {
   if (mode === 'implement') return `implement the step "${step}" in ${file}`;
-  return `plan the step "${step}" in ${file}: discuss it with me, ask about anything unclear, ` +
-    `and suggest what to add or change in the spec. Don't write any code.`;
+  return `plan the step "${step}" in ${file}: write what's unclear into the step as "?" lines, each with 2 to 4 answers I ` +
+    `can pick under it, one line each: "- <the choice, at most 6 words> — <its trade-off, at most 12 words>", the one you ` +
+    `recommend first, ending in " (recommended)". I answer them in the spec. Then suggest what else to add or change. ` +
+    `Don't write any code.`;
 }
+
+// What the agent is asked for the answers to a ? you wrote in a step, which you then pick from in the editor.
+export function answersPrompt(file: string, step: string[], question: string): string {
+  return `In the spec ${file}, this step asks "${question}":\n\n${step.join('\n')}\n\n` +
+    'Read the code it refers to as you need. Then reply with only 2 to 4 answers to pick from, one line each, as ' +
+    '"- <the choice, in at most 6 words> — <its trade-off, in at most 12 words>". Put the one you recommend first, and end ' +
+    'it with " (recommended)". No other text, and change no files.';
+}
+
+// The answers in the agent's reply to answersPrompt: its "- " lines.
+export const answersIn = (reply: string) => [...reply.matchAll(/^\s*[-*]\s+(.*\S)/gm)].map((m) => m[1].replace(/\*\*/g, ''));
 
 // One headless claude run, streamed back as JSON lines, continuing the step's session when it has one.
 // The prompt goes last, after "--", so a prompt starting with "-" isn't read as a flag.

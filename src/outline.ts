@@ -18,6 +18,7 @@ export function parseOutline(text: string): OutlineNode[] {
   const headings: { level: number; node: OutlineNode }[] = [];
   let open: { indent: number; node: OutlineNode }[] = []; // unit/type/method/field chain under the current heading
   let inFence = false;
+  let question = -1; // the indent of the ? line above, whose answers aren't fields or methods
 
   const node = (kind: OutlineNode['kind'], name: string, detail: string, line: number): OutlineNode =>
     ({ kind, name, detail, line, endLine: line, children: [] });
@@ -50,6 +51,8 @@ export function parseOutline(text: string): OutlineNode[] {
     const indent = line.search(/\S/);
     while (open.length && open[open.length - 1].indent >= indent) open.pop();
     extend();
+    if (indent > question && question >= 0) return;
+    question = /^\s*(?:-\s+)?\?/.test(line) ? indent : -1;
     const top = open[open.length - 1]?.node;
     if (top?.kind === 'method') return; // logic line
 
@@ -70,6 +73,64 @@ export function parseOutline(text: string): OutlineNode[] {
     open.push({ indent, node: n });
   });
   return roots;
+}
+
+export interface Answer {
+  line: number;
+  text: string;
+  choice: string; // what it picks: the text before " — " or ": ", without "(recommended)"
+  tradeoff: string; // the rest, without "(recommended)"
+  why: number; // the column its trade-off starts at, the line's end when it has none
+  recommended: boolean;
+}
+
+export interface Question {
+  line: number;
+  question: string;
+  answers: Answer[]; // the "- " lines under it, to pick from
+  end: number; // its last line
+}
+
+// An answer line's parts: "- slog — levels and fields (recommended)" picks slog, for levels and fields.
+function answerOf(line: number, text: string): Answer {
+  const at = text.search(/^\s*-\s+/) < 0 ? 0 : text.match(/^\s*-\s+/)![0].length;
+  const body = text.slice(at).trimEnd();
+  const split = body.match(/\s+[—–]\s+|:\s+/);
+  const recommended = /\(recommended\)\s*$/i.test(body);
+  const clean = (s: string) => s.replace(/\s*\(recommended\)\s*$/i, '');
+  return {
+    line, text: body, recommended,
+    choice: clean(split ? body.slice(0, split.index) : body),
+    tradeoff: split ? clean(body.slice(split.index! + split[0].length)) : '',
+    why: split ? at + split.index! : text.trimEnd().length,
+  };
+}
+
+// The question or answer on `line`, if it's one.
+export function questionAt(text: string, line: number): { question: Question; answer?: Answer } | undefined {
+  for (const question of questionsOf(text)) {
+    if (question.line === line) return { question };
+    const answer = question.answers.find((a) => a.line === line);
+    if (answer) return { question, answer };
+  }
+}
+
+// The ? lines of a spec, "? ..." or "- ? ...", with the answers listed under them.
+export function questionsOf(text: string): Question[] {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''));
+  const questions: Question[] = [];
+  let fence = false;
+  lines.forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    const q = !fence && line.match(/^(\s*)(?:-\s+)?\?\s*(.*?)\s*$/);
+    if (!q) return;
+    const answers: Answer[] = [];
+    for (let j = i + 1; j < lines.length && lines[j].search(/\S/) > q[1].length; j++) {
+      if (/^\s*-\s+\S/.test(lines[j])) answers.push(answerOf(j, lines[j]));
+    }
+    questions.push({ line: i, question: q[2], answers, end: answers.length ? answers[answers.length - 1].line : i });
+  });
+  return questions;
 }
 
 // "## Title" steps without [x]: the work left to build.

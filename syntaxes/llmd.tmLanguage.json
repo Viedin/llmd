@@ -9,9 +9,13 @@
       "match": "^\\s*//.*$"
     },
     {
+      "comment": "A question: \"? ...\" or \"- ? ...\".",
       "name": "markup.bold.question.llmd",
-      "match": "^\\s*(\\?).*$",
-      "captures": { "1": { "name": "keyword.control.question.llmd" } }
+      "match": "^\\s*(?:(-)\\s+)?(\\?).*$",
+      "captures": {
+        "1": { "name": "punctuation.definition.list.begin.markdown" },
+        "2": { "name": "keyword.control.question.llmd" }
+      }
     },
     {
       "match": "^\\s*([@+])([\\w\\-./]+)\\s*$",
@@ -40,15 +44,26 @@
       ]
     },
     {
-      "comment": "A check: what must hold once the step is built. Green like an added diff line.",
-      "begin": "^\\s*(!)(?=\\s)",
+      "comment": "A check: what must hold once the step is built, \"! ...\" or \"- ! ...\". Green like an added diff line.",
+      "begin": "^\\s*(?:(-)\\s+)?(!)(?=\\s|$)",
       "end": "$",
-      "beginCaptures": { "1": { "name": "keyword.control.check.llmd" } },
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.list.begin.markdown" },
+        "2": { "name": "keyword.control.check.llmd" }
+      },
       "contentName": "markup.inserted.check.llmd",
       "patterns": [
         { "name": "string.other.path.llmd", "match": "(?<![\\w@])@[\\w\\-./]+" },
         { "include": "text.html.markdown#inline" }
       ]
+    },
+    {
+      "comment": "A method or function: its name gets the theme's function color.",
+      "match": "^\\s*(-)\\s+(?:\\[[ xX]\\]\\s+)?~?([A-Za-z_]\\w*)(?=\\()",
+      "captures": {
+        "1": { "name": "punctuation.definition.list.begin.markdown" },
+        "2": { "name": "entity.name.function.llmd" }
+      }
     },
     {
       "match": "^\\s*(-)\\s",

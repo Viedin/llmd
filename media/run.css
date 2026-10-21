@@ -52,16 +52,31 @@ h1 { margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow
 .note { margin: 12px 14px 0 4.6em; font-size: 12px; color: var(--vscode-descriptionForeground); }
 .note.missing { color: var(--vscode-editorWarning-foreground); }
 ul.missing { margin: 4px 14px 0 4.6em; padding-left: 16px; font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--vscode-descriptionForeground); }
-.l.k-unit, .ref { color: var(--vscode-textLink-foreground); }
-.l.k-type { color: var(--vscode-symbolIcon-classForeground); }
-.method { color: var(--vscode-symbolIcon-methodForeground); }
-.l.k-question { color: var(--vscode-editorWarning-foreground); }
-.l.k-check { color: var(--vscode-charts-green); }
-.l.k-free { font-style: italic; }
-.l.k-comment { color: var(--vscode-descriptionForeground); }
-.l.k-heading { font-weight: 600; }
-.l.k-removed { opacity: 0.6; text-decoration: line-through; }
-.tick { color: var(--vscode-charts-green); }
+/* The grammar's tokens (tokens.js). The theme's own colors come in from the extension and win; these are for a theme it
+   can't read. Below them, what the editor adds on top, which wins over the theme too. */
+.code { color: var(--vscode-editor-foreground); }
+.t-path, .t-free-path, .t-check-path { color: var(--vscode-textLink-foreground); }
+.t-heading, .t-heading-punct { color: var(--vscode-textLink-foreground); font-weight: bold; }
+.t-type-name, .t-sem-type { color: var(--vscode-symbolIcon-classForeground); }
+.t-function { color: var(--vscode-symbolIcon-methodForeground); }
+.t-list, .t-comment { color: var(--vscode-descriptionForeground); }
+.t-question, .t-bold, .t-free-bold, .t-check-bold { font-weight: bold; }
+.t-free, .t-free-path, .t-free-raw, .t-free-bold { font-style: italic; }
+.t-check, .t-check-path, .t-check-raw, .t-check-bold { color: var(--vscode-charts-green); }
+.t-raw, .t-free-raw, .t-check-raw { color: var(--vscode-textPreformat-foreground); }
+.l .t-path, .l .t-free-path, .l .t-check-path { text-decoration: underline; } /* links, as in the editor */
+.l .t-new { color: var(--vscode-gitDecoration-addedResourceForeground); }
+.l .t-question-mark { color: var(--vscode-editorWarning-foreground); font-weight: bold; }
+.l .t-check-mark { color: var(--vscode-testing-iconPassed); font-weight: bold; }
+.l .b1 { color: var(--vscode-editorBracketHighlight-foreground1); }
+.l .b2 { color: var(--vscode-editorBracketHighlight-foreground2); }
+.l .b3 { color: var(--vscode-editorBracketHighlight-foreground3); }
+/* A ? in the step: its answers to click, their trade-offs dimmed as in the editor */
+.l .t-tradeoff { opacity: 0.5; }
+.row.pick { cursor: pointer; }
+.row.pick:hover { background: var(--vscode-list-hoverBackground); }
+.row.pick:hover .mark::before { content: '›'; color: var(--vscode-textLink-foreground); }
+
 .changes { margin: 18px 14px 0 1.2em; }
 .changes h2, .changes > summary {
   display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase;

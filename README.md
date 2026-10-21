@@ -14,13 +14,15 @@ lang: csharp
     - read the input like before
     - quit on q
   ? should q also work in the middle of entering numbers
+    - yes, anywhere
+    - only at the main prompt
   ! entering q exits with code 0
 
 @Program.cs
   - use HandleUser.ReadUserInput
 ```
 
-`@` is an existing file, `+` a new one, `-` a method or a line of logic, `?` a question the agent must ask you, and `!` a check that must pass before the step is done. The rest is plain markdown.
+`@` is an existing file, `+` a new one, `-` a method or a line of logic, `?` a question, with answers to pick from under it, and `!` a check that must pass before the step is done. The rest is plain markdown.
 
 LLMD has two parts:
 

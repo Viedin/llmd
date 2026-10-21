@@ -2,9 +2,10 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { agentArgs, Part, render, stepPrompt } from './agent';
-import { missing, whereNames } from './code';
-import { openSteps, stepSection } from './outline';
+import { freshSpans, missing, onDidChangeCode, typeSpansOf, whereNames } from './code';
+import { openSteps, questionsOf, stepSection } from './outline';
 import { projectOf } from './refs';
+import { themeCss } from './theme';
 
 // A step's run. Implement or Plan turns the spec's editor into the step's own chat, in the same spot: the step stays on the
 // left, live as the agent edits it, and the conversation is on the right. Each step is one fresh claude session, run headless.
@@ -58,14 +59,12 @@ export interface Run {
 }
 
 export const runs = new Map<string, Run>(); // "<spec uri>#<step>" → its run
-const changes = new vscode.EventEmitter<void>();
-export const onDidChangeRuns = changes.event; // a run started, ended or got its tab, so the step's lenses change
 let state: vscode.Memento; // per step: its claude session and its run (messages and the step as it was)
 let media: vscode.Uri;
 let log: vscode.LogOutputChannel; // the LLMD output channel: what the runs' tabs report, like how Accept's animation went
 
 export const runKey = (spec: vscode.Uri, step: string) => `${spec.toString()}#${step}`;
-const specPath = (uri: vscode.Uri) => path.relative(rootOf(uri).fsPath, uri.fsPath).split(path.sep).join('/');
+export const specPath = (uri: vscode.Uri) => path.relative(rootOf(uri).fsPath, uri.fsPath).split(path.sep).join('/');
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export function runOf(spec: vscode.Uri, step: string): Run {
@@ -118,6 +117,40 @@ async function specText(uri: vscode.Uri): Promise<string | undefined> {
   return open?.isDirty ? open.getText() : readFile(uri);
 }
 
+const colored = new Map<string, { text: string; marks: Promise<[number, number, number, string][]> }>(); // by spec
+
+// What the editor colors in a spec beyond its grammar, as [line, start, end, class]: the code's types, and the names the
+// code doesn't have yet. Kept until the spec's text or the code changes.
+function marksOf(spec: vscode.Uri, text: string) {
+  let hit = colored.get(spec.toString());
+  if (hit?.text !== text) {
+    const root = rootOf(spec);
+    const marks = Promise.all([typeSpansOf(root, text), freshSpans(root, text)]).then(([types, fresh]) => [
+      ...types.map((s) => [s.line, s.start, s.end, 't-sem-type'] as [number, number, number, string]),
+      ...fresh.map((s) => [s.line, s.start, s.end, 't-new'] as [number, number, number, string]),
+    ]);
+    colored.set(spec.toString(), (hit = { text, marks }));
+  }
+  return hit.marks;
+}
+
+// The file of the color theme you have on.
+export function themeFile(): string | undefined {
+  const auto = vscode.workspace.getConfiguration('window').get<boolean>('autoDetectColorScheme');
+  const kind = vscode.window.activeColorTheme.kind;
+  const setting = !auto ? 'colorTheme' : kind === vscode.ColorThemeKind.Light ? 'preferredLightColorTheme'
+    : kind === vscode.ColorThemeKind.HighContrast ? 'preferredHighContrastColorTheme'
+    : kind === vscode.ColorThemeKind.HighContrastLight ? 'preferredHighContrastLightColorTheme' : 'preferredDarkColorTheme';
+  const id = vscode.workspace.getConfiguration('workbench').get<string>(setting);
+  for (const ext of vscode.extensions.all) {
+    const theme = (ext.packageJSON?.contributes?.themes ?? []).find((t: any) => t.id === id || t.label === id);
+    if (theme?.path) return path.join(ext.extensionPath, theme.path);
+  }
+}
+
+// The step on the left in the editor's colors, which the theme's file has.
+const postTheme = (run: Run) => run.panel?.webview.postMessage({ type: 'theme', css: themeCss(themeFile()) });
+
 async function post(run: Run) {
   const text = await specText(run.spec);
   // A done run shows the step as it was, whatever has its title in the spec now.
@@ -127,7 +160,6 @@ async function post(run: Run) {
   if (!section && !run.done && run.last && /^##\s+\[[xX]\]/.test(run.last[0])) {
     run.done = true;
     save(run);
-    changes.fire();
   }
   if (!run.panel) return;
   const root = rootOf(run.spec).fsPath;
@@ -137,6 +169,10 @@ async function post(run: Run) {
     step: run.step,
     file: specPath(run.spec),
     lines: section?.lines ?? run.last ?? [],
+    // The editor's colors beyond the grammar, for the step's lines as they are now.
+    marks: section ? (await marksOf(run.spec, text!)).filter(([l]) => l >= section.line && l < section.line + section.lines.length)
+      .map(([l, s, e, c]) => [l - section.line, s, e, c]) : [],
+    questions: section ? questionsOf(section.lines.join('\n')) : [], // to answer by clicking, as in the editor
     before: run.before,
     ticked,
     missing: ticked && !run.child ? await missing(rootOf(run.spec), section!.lines) : [], // what the code doesn't back yet
@@ -282,9 +318,10 @@ function show(run: Run, panel: vscode.WebviewPanel) {
 <section id="review"><form id="commit"><textarea id="message" rows="3" placeholder="Commit message"></textarea><div class="actions">
 <button type="button" data-act="write">✨ Write with Claude</button><span class="grow"></span><button class="primary" id="commitButton" type="submit">Commit</button></div></form>
 <p id="committed"></p><div id="landed"></div></section>
-<script nonce="${nonce}" src="${asset('run.js')}"></script></body></html>`;
+<script nonce="${nonce}" src="${asset('tokens.js')}"></script><script nonce="${nonce}" src="${asset('run.js')}"></script></body></html>`;
   panel.webview.onDidReceiveMessage(async (m) => {
     if (m.type === 'log') return log.info(`${run.step}: ${m.text}`);
+    if (m.type === 'ready') postTheme(run);
     if (m.type === 'ready' || m.type === 'refresh') return updateDiffs(run).then(() => post(run));
     if (m.type === 'allow') {
       const part = run.messages[m.message]?.parts[m.part];
@@ -308,12 +345,12 @@ function show(run: Run, panel: vscode.WebviewPanel) {
     if (m.type === 'commit') return commit(run, m.text);
     if (m.type === 'next') return restart(openRun(vscode.Uri.parse(m.spec), m.step));
     if (m.type === 'newFeature') return newFeature();
+    if (m.type === 'decide') {
+      const section = stepSection((await specText(run.spec)) ?? '', run.step);
+      return section && vscode.commands.executeCommand('llmd.decide', run.spec, section.line + m.line, m.answer);
+    }
   });
-  panel.onDidDispose(() => {
-    run.panel = undefined;
-    changes.fire();
-  });
-  changes.fire();
+  panel.onDidDispose(() => (run.panel = undefined));
 }
 
 // The step's changes in VS Code's own diff editor: one file, or all of them in its multi-file one. The old side is the
@@ -332,6 +369,23 @@ export async function openChanges(run: Run, file?: string) {
 }
 
 // Claude writes the commit message for a done step, from the step and its diff, in a one-off headless run.
+// One question to claude, in a session of its own, and its answer; undefined when it fails. `flags` go before the prompt.
+export async function askOnce(root: vscode.Uri, prompt: string, flags: string[] = []): Promise<string | undefined> {
+  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || DEFAULT_COMMAND;
+  const [program, ...own] = command.trim().split(/\s+/);
+  const out = await new Promise<string>((resolve) => {
+    const child = execFile(program, [...own, ...flags, ...agentArgs(prompt)], { cwd: root.fsPath, maxBuffer: 16 << 20 }, (_err, stdout) => resolve(stdout ?? ''));
+    child.stdin?.end(); // claude -p waits for stdin to end
+  });
+  return out.split('\n').map((l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return undefined;
+    }
+  }).find((e) => e?.type === 'result' && !e.is_error)?.result;
+}
+
 export async function writeMessage(run: Run) {
   if (run.drafting) return;
   const root = rootOf(run.spec).fsPath;
@@ -342,19 +396,7 @@ export async function writeMessage(run: Run) {
     'Reply with only the message: a subject line, then a blank line and a short body only if it helps. No code fences, and no tools.';
   run.drafting = true;
   await post(run);
-  const command = vscode.workspace.getConfiguration('llmd').get<string>('agentCommand') || DEFAULT_COMMAND;
-  const [program, ...flags] = command.trim().split(/\s+/);
-  const out = await new Promise<string>((resolve) => {
-    const child = execFile(program, [...flags, ...agentArgs(prompt)], { cwd: root, maxBuffer: 16 << 20 }, (_err, stdout) => resolve(stdout ?? ''));
-    child.stdin?.end(); // claude -p waits for stdin to end
-  });
-  const result = out.split('\n').map((l) => {
-    try {
-      return JSON.parse(l);
-    } catch {
-      return undefined;
-    }
-  }).find((e) => e?.type === 'result' && !e.is_error)?.result as string | undefined;
+  const result = await askOnce(rootOf(run.spec), prompt);
   run.drafting = false;
   await post(run);
   if (!result) return vscode.window.showErrorMessage("Claude couldn't write the commit message. Write it yourself, or try again.");
@@ -457,7 +499,6 @@ async function ask(run: Run, text: string, prompt: string) {
   const child = spawn(program, [...flags, ...agentArgs(prompt, session)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
   run.child = child;
   run.stopped = false;
-  changes.fire();
   await post(run);
 
   let started = false; // claude reports init before anything else; a resume of a missing session never does
@@ -497,7 +538,6 @@ async function ask(run: Run, text: string, prompt: string) {
       run.child = undefined;
       await post(run);
       save(run); // ponytail: each step's whole run in workspace state; trim it if runs get huge
-      changes.fire();
     });
   };
   child.on('error', (e) => end(`Couldn't start ${program}: ${e.message}. Install Claude Code, or change LLMD: Agent Command in the settings.`));
@@ -584,7 +624,6 @@ export async function done(run: Run) {
   run.last = section.lines;
   save(run);
   await post(run);
-  changes.fire();
 }
 
 export function initRuns(context: vscode.ExtensionContext) {
@@ -596,11 +635,15 @@ export function initRuns(context: vscode.ExtensionContext) {
   const refresh = (uri: vscode.Uri) => runs.forEach((r) => r.spec.toString() === uri.toString() && post(r));
   const specs = vscode.workspace.createFileSystemWatcher('**/*.llmd');
   context.subscriptions.push(
-    changes,
     specs,
     specs.onDidChange(refresh),
     specs.onDidDelete(refresh),
     specs.onDidCreate(refresh),
+    onDidChangeCode(() => {
+      colored.clear();
+      runs.forEach((r) => post(r));
+    }),
+    vscode.window.onDidChangeActiveColorTheme(() => runs.forEach(postTheme)),
     vscode.workspace.onDidChangeTextDocument((e) => e.document.languageId === 'llmd' && refresh(e.document.uri)),
     vscode.workspace.registerTextDocumentContentProvider('llmd-base', {
       provideTextDocumentContent: async (uri) => {

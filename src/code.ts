@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OutlineNode, parseOutline } from './outline';
-import { Claim, claims, receiverOf, symbolName, typeWords, unitsOf } from './symbols';
+import { Claim, claims, claimSpan, isNew, receiverOf, Span, symbolName, typeSpans, typeWords, unitsOf } from './symbols';
 
 // What the plan knows about the code: each file's symbols, from its language's own VS Code extension (C# Dev Kit, Go,
 // Python…). The code is the proof of a step, so this is what tells new from existing and built from not yet.
@@ -101,6 +101,27 @@ export async function typeNamed(root: vscode.Uri, files: string[], name: string)
     if (s && TYPES.has(s.kind)) return s;
   }
   return projectType(root, name);
+}
+
+// The names a spec lists that the code doesn't have yet: under a + unit, or missing from their @ file. The editor
+// colors them as new.
+export async function freshSpans(root: vscode.Uri, text: string): Promise<Span[]> {
+  const lines = text.split('\n');
+  const spans: Span[] = [];
+  for (const c of claims(parseOutline(text))) {
+    if (isNew(c, c.newFile ? undefined : await symbolsOf(vscode.Uri.joinPath(root, c.path)))) spans.push(claimSpan(lines, c));
+  }
+  return spans;
+}
+
+// The types a spec names in field types, signatures and after a ":" that the editor colors: the language's, the
+// spec's own and the code's.
+export async function typeSpansOf(root: vscode.Uri, text: string): Promise<Span[]> {
+  const nodes = parseOutline(text);
+  const files = unitsOf(nodes);
+  const names = [...new Set(typeWords(text, nodes).map((w) => w.name))];
+  const code = (await Promise.all(names.map(async (name) => (await typeNamed(root, files, name)) && name))).filter((n): n is string => !!n);
+  return typeSpans(text, nodes, code);
 }
 
 // Where the code has what a step names, for the agent to go straight there instead of searching: the types and methods

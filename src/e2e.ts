@@ -6,7 +6,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { missing, whereNames } from './code';
 import { doneLines, newRanges } from './extension';
-import { allow, commit, hasRun, nextSteps, openChanges, runKey, runs, send, writeMessage } from './run';
+import { allow, commit, hasRun, nextSteps, openChanges, runKey, runs, send, themeFile, writeMessage } from './run';
+import { themeCss, TOKENS } from './theme';
 import { execFileSync } from 'child_process';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -38,6 +39,9 @@ export async function run() {
   await checkCodeLens();
   await checkTypes();
   await checkHighlighting();
+  await checkGrammar();
+  await checkQuestions();
+  await checkAskClaude();
   await checkEnter();
   await checkSymbols();
   await checkCode();
@@ -105,6 +109,100 @@ async function checkHighlighting() {
   assert.deepStrictEqual(names(symbols), [['Title', ['src/a.ts', ['Thing'], ['Done'], ['Open']]]]);
 }
 
+// The run tab colors the step with its own copy of the grammar: it has to give each character the scope the editor does.
+async function checkGrammar() {
+  const { grammar } = require('../media/tokens.js');
+  const text = [
+    '# Shop',
+    'lang: go',
+    '## [x] Grow the store',
+    '@cmd/store.go',
+    '  : Store',
+    '    - items: []Item',
+    '    - save(i Item) -> error',
+    '      - write it with **care** and `json`',
+    '  - ~load()',
+    '  - [x] built()',
+    '  ? json or sqlite',
+    '    - json',
+    '  - main()',
+    '    - ? use slog or fmt',
+    '      - slog',
+    '    - ! logs once',
+    '    - !',
+    '  * should be fast, see @docs/x.md',
+    '  ! saving twice keeps one copy, see @docs/y.md',
+    '// a note',
+    '- extend the : Store',
+    '+cmd/new.go',
+  ].join('\n');
+  const { doc } = await openTemp('grammar.llmd', text);
+  const tokens = await vscode.commands.executeCommand<{ c: string; t: string }[]>('_workbench.captureSyntaxTokens', doc.uri);
+  const theirs = tokens.flatMap(({ c, t }) => [...c].map((ch) => [ch, t.split(' ')] as const));
+  const ours = text.split('\n').flatMap((l) => grammar(l).flatMap(([s, e, token]: [number, number, string]) =>
+    [...l.slice(s, e)].map((ch) => [ch, TOKENS[token]] as const)));
+  assert.strictEqual(ours.map(([ch]) => ch).join(''), theirs.map(([ch]) => ch).join(''));
+  const wrong: string[] = [];
+  ours.forEach(([ch, scopes], i) => {
+    const mine = scopes[scopes.length - 1];
+    const stack = theirs[i][1];
+    const inner = stack[stack.length - 1];
+    const same = inner === mine || inner.startsWith(mine + '.') || (stack.includes(mine) && inner.startsWith('punctuation.definition.'));
+    if (ch.trim() && !same) wrong.push(`"${ch}" #${i}: ${mine}, the editor: ${stack.join(' ')}`);
+  });
+  assert.deepStrictEqual(wrong.slice(0, 5), [], 'the run tab colors a spec the way the editor does');
+  assert.match(themeCss(themeFile()), /\.t-function \{ color: #/, "the step gets the theme's colors");
+}
+
+// A ? gets its answers as lenses; picking one decides it, in place.
+async function checkQuestions() {
+  const { doc } = await openTemp('ask.llmd', '## Store\n@a.go\n  ? json or sqlite\n    - json\n    - sqlite\n  - load()');
+  const lenses = await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri);
+  assert.deepStrictEqual(lenses.filter((l) => l.range.start.line === 2).map((l) => l.command?.title), ['json', 'sqlite']);
+  await vscode.commands.executeCommand('llmd.decide', doc.uri, 2, 'sqlite');
+  assert.strictEqual(doc.getText(), '## Store\n@a.go\n  // decided: json or sqlite: sqlite\n  - load()');
+  // The keyboard: ⌘↵ on an answer picks it, and "(recommended)" doesn't go into the decision.
+  const { doc: keyed, editor } = await openTemp('ask3.llmd', '## Log\n? slog or fmt\n  - slog — levels and fields (recommended)\n  - fmt — simplest');
+  const recommended = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', keyed.uri))
+    .filter((l) => l.range.start.line === 1).map((l) => l.command?.title);
+  assert.deepStrictEqual(recommended, ['$(star-full) slog', 'fmt'], 'the lenses show the choices, the recommended one starred');
+  editor.selection = new vscode.Selection(2, 0, 2, 0);
+  await vscode.commands.executeCommand('llmd.answer');
+  assert.strictEqual(keyed.getText(), '## Log\n// decided: slog or fmt: slog — levels and fields');
+  // The way Enter leaves it, after a "- ".
+  const { doc: dashed } = await openTemp('ask2.llmd', '## Log\n@main.go\n  - main()\n    - ? use slog or fmt\n      - slog\n    - done');
+  const titles = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', dashed.uri))
+    .filter((l) => l.range.start.line === 3).map((l) => l.command?.title);
+  assert.deepStrictEqual(titles, ['slog'], '"- ?" is a question too');
+  await vscode.commands.executeCommand('llmd.decide', dashed.uri, 3, 'slog');
+  assert.strictEqual(dashed.getText(), '## Log\n@main.go\n  - main()\n    // decided: use slog or fmt: slog\n    - done');
+}
+
+// Ask Claude on a ? with no answers: a fake claude replies with two, and they go in under the question.
+async function checkAskClaude() {
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-agent-'));
+  const log = path.join(tools, 'args.log');
+  const agent = path.join(tools, 'agent.js');
+  fs.writeFileSync(agent, `
+    require('fs').writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));
+    console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'Two ways:\\n- slog — structured (recommended)\\n- fmt — simplest' }));
+  `);
+  const settings = vscode.workspace.getConfiguration('llmd');
+  await settings.update('agentCommand', `node ${agent}`, vscode.ConfigurationTarget.Global);
+  try {
+    const { doc } = await openTemp('suggest.llmd', '## Log\n@main.go\n  - main()\n    - ? slog or fmt\n    - done');
+    const lens = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', doc.uri)).filter((l) => l.range.start.line === 3);
+    assert.deepStrictEqual(lens.map((l) => l.command?.title), ['$(sparkle) Ask Claude']);
+    vscode.window.activeTextEditor!.selection = new vscode.Selection(3, 6, 3, 6);
+    await vscode.commands.executeCommand('llmd.answer'); // ⌘↵ on a question with no answers asks Claude
+    assert.strictEqual(doc.getText(), '## Log\n@main.go\n  - main()\n    - ? slog or fmt\n      - slog — structured (recommended)\n      - fmt — simplest\n    - done');
+    const args: string[] = JSON.parse(fs.readFileSync(log, 'utf8'));
+    assert.ok(args.includes('--disallowedTools') && args.at(-1)!.includes('this step asks "slog or fmt"'), `Claude reads, and changes nothing: ${args}`);
+  } finally {
+    await settings.update('agentCommand', undefined, vscode.ConfigurationTarget.Global);
+  }
+}
+
 async function checkEnter() {
   const { doc, editor } = await openTemp('enter.llmd', '@src/a.ts');
   const pressEnter = async () => {
@@ -143,6 +241,10 @@ async function checkEnter() {
   assert.strictEqual(doc.lineAt(5).text, '    ! ', 'Enter after a check continues it');
   await pressEnter();
   assert.strictEqual(doc.lineAt(5).text, '  ! ', 'an empty check steps out and keeps the !');
+
+  await editor.edit((e) => e.replace(doc.lineAt(5).range, '    - ? slog or fmt'));
+  await pressEnter();
+  assert.strictEqual(doc.lineAt(6).text, '      - ', 'Enter after a question starts its first answer, one level in');
 }
 
 async function checkSymbols() {
@@ -339,6 +441,7 @@ async function checkCode() {
   await vscode.window.showTextDocument(add, { viewColumn: vscode.ViewColumn.Two, selection: new vscode.Range(1, 0, 1, 0) });
   const store = await vscode.window.showTextDocument(code, { viewColumn: vscode.ViewColumn.One });
   store.selection = new vscode.Selection(2, 3, 2, 3); // in save()
+  for (let i = 0; i < 40 && vscode.window.activeTextEditor !== store; i++) await sleep(50); // focus moves to its column just after
   await vscode.commands.executeCommand('llmd.addToStep');
   assert.strictEqual(add.getText(), '# Add\n## Grow\n@store.ts\n  - load()\n  : Store\n    - save()\n', 'save() goes in under Store');
   assert.strictEqual(vscode.window.activeTextEditor?.document, add, 'the spec opens');
@@ -446,6 +549,9 @@ async function checkRun() {
     await sleep(200);
     const third = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[])[2];
     assert.ok(!third.includes('--resume') && third.at(-1)!.startsWith('plan the step "Later"'), `each step starts its own chat: ${third}`);
+    const laterLenses = (await vscode.commands.executeCommand<vscode.CodeLens[]>('vscode.executeCodeLensProvider', uri))
+      .filter((l) => l.command?.arguments?.[1] === 'Later').map((l) => l.command?.command);
+    assert.deepStrictEqual(laterLenses, ['llmd.implement', 'llmd.plan'], 'a step with a run keeps Implement and Plan');
 
     // Done takes the ticked step out of its spec, since the code has what it lists: a.ts.
     await vscode.commands.executeCommand('llmd.done', uri, 'Build it');

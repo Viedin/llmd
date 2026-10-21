@@ -1,7 +1,11 @@
 import * as assert from 'assert';
-import { agentArgs, allowRules, render, stepPrompt } from './agent';
-import { OutlineNode, openSteps, parseOutline, placeIn, stepSection } from './outline';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { agentArgs, allowRules, answersIn, answersPrompt, render, stepPrompt } from './agent';
+import { OutlineNode, openSteps, parseOutline, placeIn, questionsOf, stepSection } from './outline';
 import { findRefs, projectOf } from './refs';
+import { themeCss } from './theme';
 import { builtinTypes, claims, closest, findCalls, indexSymbols, inPath, inTypePosition, isNew, ownerAbove, receiverOf, symbolName, typeSpans } from './symbols';
 
 const text = [
@@ -229,4 +233,54 @@ const sections = '# Spec\n## [x] Current state\n@a.go\n\n## Export\n@b.go\n  - S
 assert.deepStrictEqual(stepSection(sections, 'Export'), { line: 4, done: false, lines: ['## Export', '@b.go', '  - Save()'] });
 assert.deepStrictEqual(stepSection(sections, 'Done one'), { line: 9, done: true, lines: ['## [x] Done one', '- x'] });
 assert.strictEqual(stepSection(sections, 'Folded away'), undefined);
+// A ? and the answers under it, which aren't fields or methods of the file.
+const asked = ['@a.go', '  ? json or sqlite', '    - json', '    - sqlite: concurrent writes', '  - load()'].join('\n');
+assert.deepStrictEqual(questionsOf(asked), [{ line: 1, question: 'json or sqlite', end: 3, answers: [
+  { line: 2, text: 'json', choice: 'json', tradeoff: '', why: 10, recommended: false },
+  { line: 3, text: 'sqlite: concurrent writes', choice: 'sqlite', tradeoff: 'concurrent writes', why: 12, recommended: false },
+] }]);
+assert.deepStrictEqual(questionsOf('? log\n  - slog — levels and fields (recommended)').map((q) => q.answers.map((a) => [a.choice, a.tradeoff, a.why, a.recommended])),
+  [[['slog', 'levels and fields', 8, true]]], 'the choice, its trade-off and the one Claude recommends');
+assert.deepStrictEqual(shape(parseOutline(asked)), [['unit a.go  0-4', ['method load () 4-4']]], 'answers are not fields');
+assert.deepStrictEqual(questionsOf('  - main()\n    - ? slog or fmt\n      - slog\n    - next').map((q) => [q.line, q.question, q.answers.map((a) => a.text), q.end]),
+  [[1, 'slog or fmt', ['slog'], 2]], '"- ?" is a question too, the way Enter leaves it');
+
+// Claude's answers to a ? you wrote: the "- " lines of its reply.
+assert.deepStrictEqual(answersIn('Here you go:\n- **slog**: structured (recommended)\n- fmt: simplest\n'), ['slog: structured (recommended)', 'fmt: simplest']);
+assert.ok(answersPrompt('.llmd/a.llmd', ['## Log', '- ? slog or fmt'], 'slog or fmt').includes('this step asks "slog or fmt":\n\n## Log\n- ? slog or fmt'));
+
+// The run tab's copy of the grammar: a line as [start, end, token] pieces.
+const { grammar } = require('../media/tokens.js');
+const pieces = (line: string) => grammar(line).map(([s, e, t]: [number, number, string]) => `${line.slice(s, e)}|${t}`);
+assert.deepStrictEqual(pieces('## Test'), ['##|heading-punct', ' |heading', 'Test|heading']);
+assert.deepStrictEqual(pieces('## [x] Done'), ['##|heading-punct', ' |heading', '[|box-punct', 'x|box', ']|box-punct', ' Done|heading']);
+assert.deepStrictEqual(pieces('  - main()'), ['  |plain', '-|list', ' |plain', 'main|function', '()|plain']);
+assert.deepStrictEqual(pieces('* see @a.go now'), ['*|list', ' see |free', '@a.go|free-path', ' now|free']);
+assert.deepStrictEqual(pieces('? json or sqlite'), ['?|question-mark', ' json or sqlite|question']);
+assert.deepStrictEqual(pieces('  - ? slog'), ['  |question', '-|question-list', ' |question', '?|question-mark', ' slog|question']);
+assert.deepStrictEqual(pieces('  - ! once'), ['  |plain', '-|list', ' |plain', '!|check-mark', ' once|check']);
+assert.deepStrictEqual(pieces('  : Store x'), ['  |plain', ':|type-op', ' |plain', 'Store|type-name', ' x|plain']);
+
+// The theme's colors, picked the way the editor picks them: included themes first, the best fitting rule, descendant
+// selectors, and color and font style each on their own.
+const themes = fs.mkdtempSync(path.join(os.tmpdir(), 'llmd-theme-'));
+fs.writeFileSync(path.join(themes, 'base.json'), JSON.stringify({ tokenColors: [
+  { scope: 'string', settings: { foreground: '#111111' } },
+  { scope: 'markup.italic', settings: { foreground: '#222222', fontStyle: 'italic' } },
+] }));
+fs.writeFileSync(path.join(themes, 'theme.json'), `{
+  "$schema": "vscode://schemas/color-theme", // a comment, and a trailing comma
+  "include": "./base.json",
+  "tokenColors": [
+    { "scope": ["entity.name", "markup.heading entity.name"], "settings": { "foreground": "#333333" } },
+    { "scope": "entity.name.type", "settings": { "foreground": "#444444" } },
+  ],
+}`);
+const css = themeCss(path.join(themes, 'theme.json'));
+assert.match(css, /\.t-free-path \{ color: #111111; font-style: italic;/, 'a path in a free line: the string color, the italic of its line');
+assert.match(css, /\.t-heading \{ color: #333333;/);
+assert.match(css, /\.t-type-name \{ color: #444444;/, 'the more specific rule wins');
+assert.match(css, /\.l \.t-sem-type \{ color: #444444; \}/);
+assert.match(css, /\.t-plain \{ color: var\(--vscode-editor-foreground\);/);
+assert.strictEqual(themeCss(path.join(themes, 'missing.json')), '', 'no theme, no colors');
 console.log('ok');
